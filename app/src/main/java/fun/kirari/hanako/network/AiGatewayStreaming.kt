@@ -210,10 +210,10 @@ internal suspend fun AiGateway.streamOpenAiChat(
         request = baseRequest(provider, "${provider.baseUrl.trimEnd('/')}/chat/completions", payload),
         onEvent = { _, _, _, data ->
             if (data == "[DONE]") {
-                null
+                SseStreamClient.StreamEventResult(done = true)
             } else {
                 val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: null
-                root?.let { extractOpenAiChatDelta(it) }
+                SseStreamClient.StreamEventResult(delta = root?.let { extractOpenAiChatDelta(it) })
             }
         },
         onDelta = onDelta
@@ -264,13 +264,13 @@ internal suspend fun AiGateway.streamResponses(
         request = baseRequest(provider, "${provider.baseUrl.trimEnd('/')}/responses", payload),
         onEvent = { _, type, _, data ->
             if (data == "[DONE]") {
-                null
+                SseStreamClient.StreamEventResult(done = true)
             } else {
                 val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: null
-                when (type) {
+                SseStreamClient.StreamEventResult(delta = when (type) {
                     "response.output_text.delta" -> root?.get("delta")?.jsonPrimitive?.contentOrNull
                     else -> null
-                }
+                })
             }
         },
         onDelta = onDelta
@@ -330,7 +330,7 @@ internal suspend fun AiGateway.streamOpenAiChatAutomation(
     sseClient.stream(
         request = baseRequest(provider, "${provider.baseUrl.trimEnd('/')}/chat/completions", payload),
         onEvent = { _, _, _, data ->
-            if (data == "[DONE]") return@stream null
+            if (data == "[DONE]") return@stream SseStreamClient.StreamEventResult(done = true)
             val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: return@stream null
             val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject ?: return@stream null
             val delta = choice["delta"]?.jsonObject ?: return@stream null
@@ -355,7 +355,7 @@ internal suspend fun AiGateway.streamOpenAiChatAutomation(
                     "streamOpenAiChatAutomation tool delta rawName=$deltaName resolvedName=$toolName argsLength=${toolArguments.length}"
                 )
             }
-            textDelta.ifBlank { null }
+            SseStreamClient.StreamEventResult(delta = textDelta.ifBlank { null })
         },
         onDelta = onThoughtDelta
     )
@@ -420,7 +420,7 @@ internal suspend fun AiGateway.streamResponsesAutomation(
     sseClient.stream(
         request = baseRequest(provider, "${provider.baseUrl.trimEnd('/')}/responses", payload),
         onEvent = { _, type, _, data ->
-            if (data == "[DONE]") return@stream null
+            if (data == "[DONE]") return@stream SseStreamClient.StreamEventResult(done = true)
             val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: return@stream null
             when (type) {
                 "response.output_text.delta" -> {
@@ -430,7 +430,7 @@ internal suspend fun AiGateway.streamResponsesAutomation(
                         loggedThoughtDelta = true
                         AppDebugLogStore.i(STREAM_TAG, "streamResponsesAutomation first thought delta received")
                     }
-                    delta
+                    SseStreamClient.StreamEventResult(delta = delta)
                 }
 
                 "response.function_call_arguments.delta" -> {
@@ -519,13 +519,13 @@ internal suspend fun AiGateway.streamAnthropic(
         ),
         onEvent = { _, type, _, data ->
             if (data == "[DONE]") {
-                null
+                SseStreamClient.StreamEventResult(done = true)
             } else {
                 val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: null
-                when (type) {
+                SseStreamClient.StreamEventResult(delta = when (type) {
                     "content_block_delta" -> root?.get("delta")?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull
                     else -> null
-                }
+                })
             }
         },
         onDelta = onDelta
@@ -591,7 +591,7 @@ internal suspend fun AiGateway.streamAnthropicAutomation(
             headers = mapOf("anthropic-version" to "2023-06-01")
         ),
         onEvent = { _, type, _, data ->
-            if (data == "[DONE]") return@stream null
+            if (data == "[DONE]") return@stream SseStreamClient.StreamEventResult(done = true)
             val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: return@stream null
             when (type) {
                 "content_block_start" -> {
@@ -613,7 +613,7 @@ internal suspend fun AiGateway.streamAnthropicAutomation(
                                 loggedThoughtDelta = true
                                 AppDebugLogStore.i(STREAM_TAG, "streamAnthropicAutomation first thought delta received")
                             }
-                            text
+                            SseStreamClient.StreamEventResult(delta = text)
                         }
 
                         "input_json_delta" -> {
@@ -705,15 +705,17 @@ internal suspend fun AiGateway.streamGoogle(
         onEvent = { _, _, _, data ->
             val root = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: null
             val candidates = root?.get("candidates")?.jsonArray ?: null
-            candidates?.firstOrNull()
-                ?.jsonObject
-                ?.get("content")
-                ?.jsonObject
-                ?.get("parts")
-                ?.jsonArray
-                ?.joinToString(separator = "") { part ->
-                    part.jsonObject["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                }
+            SseStreamClient.StreamEventResult(
+                delta = candidates?.firstOrNull()
+                    ?.jsonObject
+                    ?.get("content")
+                    ?.jsonObject
+                    ?.get("parts")
+                    ?.jsonArray
+                    ?.joinToString(separator = "") { part ->
+                        part.jsonObject["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    }
+            )
         },
         onDelta = onDelta
     )
@@ -805,7 +807,7 @@ internal suspend fun AiGateway.streamGoogleAutomation(
                     loggedThoughtDelta = true
                     AppDebugLogStore.i(STREAM_TAG, "streamGoogleAutomation first thought delta received")
                 }
-                deltaText
+                SseStreamClient.StreamEventResult(delta = deltaText)
             } else {
                 null
             }

@@ -22,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SmartToy
@@ -101,14 +100,6 @@ fun SettingsMenuScreen(
                 subtitle = "开启完成通知；主页长按启动进入自动模式",
                 icon = Icons.Default.SmartToy,
                 onClick = onNavigateAutomation
-            )
-        }
-        item {
-            SettingsEntryCard(
-                title = "调试日志",
-                subtitle = "查看、复制和清空应用内调试日志",
-                icon = Icons.Default.Description,
-                onClick = onNavigateDebugLogs
             )
         }
     }

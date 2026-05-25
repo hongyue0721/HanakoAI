@@ -18,9 +18,15 @@ internal class SseStreamClient(
     private val client: OkHttpClient
 ) {
     private val tag = "HanakoSseClient"
+
+    internal data class StreamEventResult(
+        val delta: String? = null,
+        val done: Boolean = false
+    )
+
     suspend fun stream(
         request: Request,
-        onEvent: (eventSource: EventSource, type: String?, id: String?, data: String) -> String?,
+        onEvent: (eventSource: EventSource, type: String?, id: String?, data: String) -> StreamEventResult?,
         onDelta: (String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         suspendCancellableCoroutine { cont ->
@@ -50,10 +56,16 @@ internal class SseStreamClient(
                         if (eventCount <= 5 || eventCount % 25 == 0) {
                             AppDebugLogStore.d(tag, "stream event#$eventCount type=$type id=$id dataLength=${data.length}")
                         }
-                        val delta = onEvent(eventSource, type, id, data)
+                        val result = onEvent(eventSource, type, id, data)
+                        val delta = result?.delta
                         if (!delta.isNullOrEmpty()) {
                             builder.append(delta)
                             onDelta(delta)
+                        }
+                        if (result?.done == true) {
+                            AppDebugLogStore.i(tag, "stream completed by protocol signal totalEvents=$eventCount outputLength=${builder.length} url=${request.url}")
+                            finish { cont.resume(builder.toString()) }
+                            eventSource.cancel()
                         }
                     } catch (t: Throwable) {
                         finish { cont.resumeWithException(t) }
