@@ -7,8 +7,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -214,30 +212,29 @@ fun HeroSection(
                     val buttonColor = if (overlayEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
                     val buttonTextColor = if (overlayEnabled) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.primaryContainer
 
-                    Button(
-                        onClick = {
-                            onToggleOverlay(!overlayEnabled && hasOverlayPermission)
-                        },
+                    Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onLongPress = {
-                                        if (!overlayEnabled && hasOverlayPermission) {
-                                            onStartAutoMode()
-                                        }
+                            .clip(RoundedCornerShape(16.dp))
+                            .combinedClickable(
+                                enabled = hasOverlayPermission,
+                                onClick = {
+                                    onToggleOverlay(!overlayEnabled && hasOverlayPermission)
+                                },
+                                onLongClick = {
+                                    if (!overlayEnabled && hasOverlayPermission) {
+                                        onStartAutoMode()
                                     }
-                                )
-                            },
-                        enabled = hasOverlayPermission,
+                                }
+                            ),
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = buttonColor,
-                            contentColor = buttonTextColor
-                        )
+                        color = buttonColor,
+                        contentColor = buttonTextColor
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
