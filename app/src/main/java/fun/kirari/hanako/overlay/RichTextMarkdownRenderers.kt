@@ -527,6 +527,9 @@ private fun Paragraph(
     val inlineContents = remember(node) {
         mutableMapOf<String, InlineTextContent>()
     }
+    val hasInlineMath = remember(node) {
+        node.findChildRecursive(GFMElementTypes.INLINE_MATH) != null
+    }
 
     val annotated = remember(content, node, trim) {
         buildAnnotatedString {
@@ -550,7 +553,10 @@ private fun Paragraph(
         inlineContent = inlineContents,
         softWrap = true,
         overflow = TextOverflow.Visible,
-        modifier = Modifier.padding(top = topPadding, bottom = bottomPadding)
+        modifier = Modifier.padding(top = topPadding, bottom = bottomPadding),
+        style = textStyle.copy(
+            lineHeight = if (hasInlineMath) TextUnit.Unspecified else textStyle.lineHeight
+        )
     )
 }
 
@@ -709,12 +715,14 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
             val formula = node.getText(content)
             val key = formula
             val placeholder = runCatching {
-                assumeLatexSize(formula, with(density) { style.fontSize.toPx() }).let { rect ->
+                with(density) {
+                    assumeLatexSize(formula, style.fontSize.toPx()).let { rect ->
                     Placeholder(
-                        width = TextUnit(rect.width().toFloat(), TextUnitType.Sp),
-                        height = TextUnit(rect.height().toFloat(), TextUnitType.Sp),
+                            width = rect.width().toFloat().toSp(),
+                            height = rect.height().toFloat().toSp(),
                         placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
                     )
+                }
                 }
             }.getOrNull()
             if (placeholder != null) {
