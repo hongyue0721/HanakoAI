@@ -21,14 +21,10 @@ class MainActivity : ComponentActivity() {
             Log.e("HanakoAI", "Uncaught exception in thread ${thread.name}", throwable)
             defaultHandler?.uncaughtException(thread, throwable)
         }
-        try {
-            setContent {
-                HanakoTheme {
-                    HanakoApp(viewModel)
-                }
+        setContent {
+            HanakoTheme {
+                HanakoApp(viewModel)
             }
-        } catch (e: Exception) {
-            Log.e("HanakoAI", "setContent failed", e)
         }
     }
 }

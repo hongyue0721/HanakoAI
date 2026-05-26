@@ -6,10 +6,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -60,7 +60,6 @@ import `fun`.kirari.hanako.data.ProcessingRoute
 import `fun`.kirari.hanako.data.ScreenCaptureMethod
 import kotlinx.coroutines.delay
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HeroSection(
     overlayEnabled: Boolean,
@@ -221,14 +220,15 @@ fun HeroSection(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .combinedClickable(
-                                onClick = {},
-                                onLongClick = {
-                                    if (!overlayEnabled && hasOverlayPermission) {
-                                        onStartAutoMode()
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onLongPress = {
+                                        if (!overlayEnabled && hasOverlayPermission) {
+                                            onStartAutoMode()
+                                        }
                                     }
-                                }
-                            ),
+                                )
+                            },
                         enabled = hasOverlayPermission,
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
