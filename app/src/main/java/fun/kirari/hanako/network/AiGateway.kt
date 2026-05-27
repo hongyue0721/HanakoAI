@@ -106,6 +106,55 @@ class AiGateway(
         return ocrText to answer
     }
 
+    suspend fun streamExtractedTextThenChat(
+        textProvider: ModelProviderConfig,
+        textModel: String,
+        assistant: AssistantPreset,
+        extractedText: String,
+        firstDeltaTimeoutMillis: Long,
+        onAnswerDelta: (String) -> Unit
+    ): String {
+        AppDebugLogStore.i(tag, "streamExtractedTextThenChat start textModel=$textModel extractedLength=${extractedText.length}")
+        val answer = streamText(
+            provider = textProvider,
+            model = textModel,
+            systemPrompt = assistantPromptWithCopyMarker(assistant.textPrompt),
+            userPrompt = "以下是 OCR 结果，请完成任务：\n$extractedText",
+            firstDeltaTimeoutMillis = firstDeltaTimeoutMillis,
+            onDelta = onAnswerDelta
+        )
+        AppDebugLogStore.i(tag, "streamExtractedTextThenChat success answerLength=${answer.length}")
+        return answer
+    }
+
+    suspend fun streamExtractedTextThenAutomation(
+        textProvider: ModelProviderConfig,
+        textModel: String,
+        assistant: AssistantPreset,
+        extractedText: String,
+        firstDeltaTimeoutMillis: Long,
+        onThoughtDelta: (String) -> Unit
+    ): AutomationResult {
+        AppDebugLogStore.i(
+            tag,
+            "streamExtractedTextThenAutomation start textModel=$textModel extractedLength=${extractedText.length}"
+        )
+        val result = streamAutomation(
+            provider = textProvider,
+            model = textModel,
+            systemPrompt = automationSystemPrompt(assistant.textPrompt),
+            userPrompt = "以下是 OCR 结果，请先输出思考过程，再通过一次工具调用给出自动模式动作：\n$extractedText",
+            imageBase64 = null,
+            firstDeltaTimeoutMillis = firstDeltaTimeoutMillis,
+            onThoughtDelta = onThoughtDelta
+        )
+        AppDebugLogStore.i(
+            tag,
+            "streamExtractedTextThenAutomation success thoughtLength=${result.thought.length} action=${result.action.type}"
+        )
+        return result
+    }
+
     suspend fun streamVisionDirect(
         provider: ModelProviderConfig,
         model: String,

@@ -38,6 +38,18 @@ data class ModelSelection(
     val model: String = ""
 )
 
+const val LOCAL_OCR_PROVIDER_ID = "__local_mlkit__"
+const val LOCAL_OCR_MODEL_ID = "mlkit_chinese_ocr"
+
+@Serializable
+data class LocalOcrSettings(
+    val installed: Boolean = false,
+    val lastMessage: String? = null,
+    val providerId: String = LOCAL_OCR_PROVIDER_ID,
+    val modelId: String = LOCAL_OCR_MODEL_ID,
+    val displayName: String = "ML Kit 中文 OCR"
+)
+
 val ProviderKind.displayName: String
     get() = when (this) {
         ProviderKind.OPENAI_COMPATIBLE -> "OpenAI Compatible"
@@ -113,6 +125,7 @@ data class AppSettings(
     val textModelSelection: ModelSelection = ModelSelection(),
     val visionModelSelection: ModelSelection = ModelSelection(),
     val ocrModelSelection: ModelSelection = ModelSelection(),
+    val localOcr: LocalOcrSettings = LocalOcrSettings(),
     val lastResult: ProcessingResult? = null,
     val history: List<ProcessingResult> = emptyList()
 )
@@ -215,11 +228,17 @@ fun AppSettings.modelSelectionFor(purpose: ModelPurpose): ModelSelection = when 
 
 fun AppSettings.resolveModelProvider(purpose: ModelPurpose): ModelProviderConfig? {
     val selection = modelSelectionFor(purpose)
+    if (purpose == ModelPurpose.OCR && selection.isLocalOcrSelection()) return null
     return providers.firstOrNull { it.id == selection.providerId }
 }
 
 fun AppSettings.resolveModelName(purpose: ModelPurpose): String {
-    return modelSelectionFor(purpose).model
+    val selection = modelSelectionFor(purpose)
+    return if (purpose == ModelPurpose.OCR && selection.isLocalOcrSelection()) {
+        localOcr.displayName
+    } else {
+        selection.model
+    }
 }
 
 fun AppSettings.normalize(): AppSettings {
@@ -250,6 +269,12 @@ private fun ModelSelection.normalize(
     fallbackProvider: ModelProviderConfig?,
     fallbackModel: String
 ): ModelSelection {
+    if (isLocalOcrSelection()) {
+        return copy(
+            providerId = LOCAL_OCR_PROVIDER_ID,
+            model = model.ifBlank { LOCAL_OCR_MODEL_ID }
+        )
+    }
     val currentProvider = providers.firstOrNull { it.id == providerId }
     return when {
         currentProvider != null && model.isNotBlank() -> this
@@ -265,3 +290,5 @@ private fun ModelSelection.normalize(
 private fun fallbackModelFrom(provider: ModelProviderConfig, fallbackModel: String): String {
     return fallbackModel.ifBlank { provider.chatModel.ifBlank { provider.visionModel.ifBlank { provider.ocrModel } } }
 }
+
+fun ModelSelection.isLocalOcrSelection(): Boolean = providerId == LOCAL_OCR_PROVIDER_ID

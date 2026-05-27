@@ -1,5 +1,7 @@
 package `fun`.kirari.hanako.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -20,10 +22,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
@@ -39,6 +43,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -65,6 +70,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -75,10 +81,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import android.widget.Toast
 import `fun`.kirari.hanako.capture.ScreenCaptureManager
 import `fun`.kirari.hanako.capture.ScreenCaptureStartResult
+import `fun`.kirari.hanako.data.LOCAL_OCR_MODEL_ID
+import `fun`.kirari.hanako.data.LOCAL_OCR_PROVIDER_ID
 import `fun`.kirari.hanako.data.ModelPurpose
 import `fun`.kirari.hanako.data.ModelSelection
 import `fun`.kirari.hanako.data.ProcessingRoute
 import `fun`.kirari.hanako.data.displayName
+import `fun`.kirari.hanako.debug.AppDebugLogStore
 import `fun`.kirari.hanako.overlay.OverlayLaunchMode
 import `fun`.kirari.hanako.overlay.OverlayRuntimeState
 import `fun`.kirari.hanako.overlay.OverlayService
@@ -132,6 +141,7 @@ private fun appTitle(route: String?, currentScreen: Screen): String = when (rout
 @Composable
 fun HanakoApp(viewModel: MainViewModel) {
     val settings by viewModel.settings.collectAsState()
+    val debugEntries by AppDebugLogStore.entries.collectAsState()
     val context = LocalContext.current
     val overlayEnabled by OverlayRuntimeState.running.collectAsState()
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -142,6 +152,7 @@ fun HanakoApp(viewModel: MainViewModel) {
     var customModelDialogTitle by remember { mutableStateOf<String?>(null) }
     var providerPickerTarget by remember { mutableStateOf<ModelPurpose?>(null) }
     var modelPickerProviderId by remember { mutableStateOf<String?>(null) }
+    var showLocalOcrDialog by remember { mutableStateOf(false) }
 
     var currentScreen by rememberSaveable { mutableStateOf(Screen.Hanako) }
     val navController = rememberNavController()
@@ -390,12 +401,26 @@ fun HanakoApp(viewModel: MainViewModel) {
     if (providerPickerTarget != null) {
         ProviderSelectDialog(
             providers = settings.providers,
+            includeLocalOcr = providerPickerTarget == ModelPurpose.OCR,
+            localOcrInstalled = settings.localOcr.installed,
             title = "选择${providerPickerTarget?.displayName}提供方",
             onDismiss = { providerPickerTarget = null },
-            onPick = { provider ->
-                modelPickerProviderId = provider.id
-                modelPickerTarget = providerPickerTarget
-                providerPickerTarget = null
+            onPick = { providerId ->
+                if (providerId == LOCAL_OCR_PROVIDER_ID) {
+                    providerPickerTarget = null
+                    if (settings.localOcr.installed) {
+                        viewModel.updateModelSelection(
+                            ModelPurpose.OCR,
+                            ModelSelection(providerId = LOCAL_OCR_PROVIDER_ID, model = LOCAL_OCR_MODEL_ID)
+                        )
+                    } else {
+                        showLocalOcrDialog = true
+                    }
+                } else {
+                    modelPickerProviderId = providerId
+                    modelPickerTarget = providerPickerTarget
+                    providerPickerTarget = null
+                }
             }
         )
     }
@@ -470,6 +495,96 @@ fun HanakoApp(viewModel: MainViewModel) {
             onCustomModelRequest = { }
         )
     }
+
+    if (showLocalOcrDialog) {
+        val localOcrLogText = remember(debugEntries) {
+            debugEntries
+                .filter { it.tag == "LocalOcr" || it.tag == "LocalOcrUi" }
+                .takeLast(12)
+                .joinToString("\n\n") { entry ->
+                    "${formatDebugTime(entry.timestamp)} ${entry.level}/${entry.tag}\n${entry.message}"
+                }
+        }
+        AlertDialog(
+            onDismissRequest = { showLocalOcrDialog = false },
+            title = { Text("本地ML Kit") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        buildString {
+                            append("不支持latex公式等识别，正式搜题建议使用qwen-vl-ocr等在线ocr模型。")
+                            settings.localOcr.lastMessage?.takeIf { it.isNotBlank() }?.let {
+                                append("\n\n")
+                                append(it)
+                            }
+                            append("\n\n点击“立即使用”后会直接切换到本地 OCR。")
+                        }
+                    )
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            copyLogs(
+                                context = context,
+                                text = if (localOcrLogText.isNotBlank()) localOcrLogText else "暂无 Local OCR 日志",
+                                label = "Hanako Local OCR Logs",
+                                toastText = "本地 OCR 日志已复制"
+                            )
+                        }
+                    ) {
+                        Text("一键复制日志")
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow
+                    ) {
+                        Text(
+                            text = if (localOcrLogText.isBlank()) "暂无 Local OCR 日志" else localOcrLogText,
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 10,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Row(
+                    modifier = Modifier.widthIn(min = 180.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TextButton(
+                        onClick = {
+                            if (settings.localOcr.installed) {
+                                viewModel.updateModelSelection(
+                                    ModelPurpose.OCR,
+                                    ModelSelection(providerId = LOCAL_OCR_PROVIDER_ID, model = LOCAL_OCR_MODEL_ID)
+                                )
+                                showLocalOcrDialog = false
+                            }
+                        }
+                    ) {
+                        Text("立即使用")
+                    }
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = viewModel::syncLocalOcrInstallation
+                    ) {
+                        Text("刷新状态")
+                    }
+                    TextButton(onClick = { showLocalOcrDialog = false }) {
+                        Text("取消")
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -521,6 +636,17 @@ private fun MainShellScreen(
             }
         }
     }
+}
+
+private fun formatDebugTime(timestamp: Long): String {
+    return java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
+        .format(java.util.Date(timestamp))
+}
+
+private fun copyLogs(context: android.content.Context, text: String, label: String, toastText: String) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    Toast.makeText(context, toastText, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
@@ -617,9 +743,11 @@ private fun HanakoHomeScreen(
 @Composable
 private fun ProviderSelectDialog(
     providers: List<`fun`.kirari.hanako.data.ModelProviderConfig>,
+    includeLocalOcr: Boolean,
+    localOcrInstalled: Boolean,
     title: String,
     onDismiss: () -> Unit,
-    onPick: (`fun`.kirari.hanako.data.ModelProviderConfig) -> Unit
+    onPick: (String) -> Unit
 ) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -633,12 +761,33 @@ private fun ProviderSelectDialog(
             ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 LazyColumn(
-                    modifier = Modifier.height(240.dp),
+                    modifier = Modifier.heightIn(max = 280.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (includeLocalOcr) {
+                        item(LOCAL_OCR_PROVIDER_ID) {
+                            OutlinedButton(
+                                onClick = { onPick(LOCAL_OCR_PROVIDER_ID) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text("本地ML Kit")
+                                    Text(
+                                        if (localOcrInstalled) {
+                                            "不支持latex公式等识别且准确率较低，正式搜题建议使用在线 OCR 例如 qwen-vl-ocr"
+                                        } else {
+                                            "点击查看本地 ML Kit 说明"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                     items(providers, key = { it.id }) { provider ->
                         OutlinedButton(
-                            onClick = { onPick(provider) },
+                            onClick = { onPick(provider.id) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {

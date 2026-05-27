@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import `fun`.kirari.hanako.data.AppSettings
 import `fun`.kirari.hanako.data.AssistantPreset
+import `fun`.kirari.hanako.data.LOCAL_OCR_PROVIDER_ID
 import `fun`.kirari.hanako.data.previewPrompt
 import `fun`.kirari.hanako.data.AutomationSettings
 import `fun`.kirari.hanako.data.ModelProviderConfig
@@ -402,7 +403,14 @@ fun ModelSettingsScreen(
                     ModelButtonField(
                         label = "${purpose.displayName} 模型",
                         value = buildString {
-                            append(provider?.name ?: "未选择提供方")
+                            append(
+                                when {
+                                    purpose == ModelPurpose.OCR && settings.ocrModelSelection.providerId == LOCAL_OCR_PROVIDER_ID ->
+                                        "本地ML Kit"
+                                    provider != null -> provider.name
+                                    else -> "未选择提供方"
+                                }
+                            )
                             if (model.isNotBlank()) {
                                 append(" / ")
                                 append(model)

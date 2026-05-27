@@ -5,9 +5,11 @@ import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import `fun`.kirari.hanako.automation.AutomationResult
 import `fun`.kirari.hanako.automation.BubbleDisplayState
 import `fun`.kirari.hanako.capture.ScreenCaptureManager
 import `fun`.kirari.hanako.data.AutomationActionType
+import `fun`.kirari.hanako.data.LOCAL_OCR_PROVIDER_ID
 import `fun`.kirari.hanako.data.ModelPurpose
 import `fun`.kirari.hanako.data.ProcessingEvent
 import `fun`.kirari.hanako.data.ProcessingResult
@@ -19,6 +21,7 @@ import `fun`.kirari.hanako.data.resolveModelProvider
 import `fun`.kirari.hanako.data.SettingsStore
 import `fun`.kirari.hanako.data.toHistoryBase64
 import `fun`.kirari.hanako.debug.AppDebugLogStore
+import `fun`.kirari.hanako.localocr.LocalOcrManager
 import `fun`.kirari.hanako.network.AiGateway
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +40,7 @@ internal class OverlayViewModel(
 ) : ViewModel() {
     private val tag = "HanakoOverlayVM"
     private val processingTimeoutMillis = 90_000L
+    private val localOcrManager = LocalOcrManager(appContext)
     private val _uiState = MutableStateFlow(OverlayUiState())
     val uiState: StateFlow<OverlayUiState> = _uiState.asStateFlow()
 
@@ -192,11 +196,57 @@ internal class OverlayViewModel(
                     when (state.settings.processingRoute) {
                         ProcessingRoute.OCR_THEN_LLM -> {
                             AppDebugLogStore.i(tag, "process route=OCR_THEN_LLM ocrModel=$ocrModel textModel=$textModel")
-                            if (ocrProvider == null || ocrModel.isBlank() || textProvider == null || textModel.isBlank()) {
+                            val usingLocalOcr = state.settings.ocrModelSelection.providerId == LOCAL_OCR_PROVIDER_ID
+                            if ((!usingLocalOcr && (ocrProvider == null || ocrModel.isBlank())) || textProvider == null || textModel.isBlank()) {
                                 error("请先在模型设置中配置 OCR 和文本模型")
                             }
+                            if (usingLocalOcr) {
+                                val (ocrText, answer) = runLocalOcrThenChat(
+                                    bitmap = bitmap,
+                                    assistant = assistant,
+                                    textProvider = textProvider,
+                                    textModel = textModel,
+                                    firstDeltaTimeoutMillis = firstDeltaTimeoutMillis,
+                                    onOcrDelta = { delta ->
+                                        _uiState.update { current ->
+                                            current.copy(liveOcrText = current.liveOcrText + delta)
+                                        }
+                                    },
+                                    onAnswerDelta = { delta ->
+                                        _uiState.update { current ->
+                                            current.copy(liveAnswerText = current.liveAnswerText + delta)
+                                        }
+                                    }
+                                )
+                                val ocrCompleted = baseResult.copy(
+                                    detail = "OCR 完成，等待答案生成",
+                                    extractedText = ocrText,
+                                    events = baseResult.events + ProcessingEvent(
+                                        title = "OCR 完成",
+                                        detail = "已提取 ${ocrText.length} 个字符"
+                                    )
+                                )
+                                upsertHistory(ocrCompleted)
+                                return@withTimeout ProcessingResult(
+                                    id = historyId,
+                                    assistantName = assistant.name,
+                                    route = ProcessingRoute.OCR_THEN_LLM,
+                                    status = ProcessingStatus.SUCCESS,
+                                    modelSummary = buildModelSummary(textModel, textProvider?.name),
+                                    detail = "处理完成",
+                                    extractedText = ocrText,
+                                    answer = answer,
+                                    screenshotBase64 = screenshotBase64,
+                                    events = ocrCompleted.events + ProcessingEvent(
+                                        title = "答案完成",
+                                        detail = "已生成 ${answer.length} 个字符"
+                                    ),
+                                    createdAtMillis = baseResult.createdAtMillis
+                                )
+                            }
+                            val remoteOcrProvider = requireNotNull(ocrProvider)
                             val (ocrText, answer) = gateway.streamOcrThenChat(
-                                ocrProvider = ocrProvider,
+                                ocrProvider = remoteOcrProvider,
                                 ocrModel = ocrModel,
                                 textProvider = textProvider,
                                 textModel = textModel,
@@ -516,16 +566,65 @@ internal class OverlayViewModel(
         )
         upsertHistory(baseResult)
 
-        runCatching {
-            withTimeout(processingTimeoutMillis) {
-                val result = when (state.settings.processingRoute) {
+        runCatching<Pair<`fun`.kirari.hanako.data.AutomationActionRecord, ProcessingResult>> {
+            withTimeout<Pair<`fun`.kirari.hanako.data.AutomationActionRecord, ProcessingResult>>(processingTimeoutMillis) {
+                val result: ProcessingResult = when (state.settings.processingRoute) {
                     ProcessingRoute.OCR_THEN_LLM -> {
                         AppDebugLogStore.i(tag, "processAutoBitmap route=OCR_THEN_LLM ocrModel=$ocrModel textModel=$textModel")
-                        if (ocrProvider == null || ocrModel.isBlank() || textProvider == null || textModel.isBlank()) {
+                        val usingLocalOcr = state.settings.ocrModelSelection.providerId == LOCAL_OCR_PROVIDER_ID
+                        if ((!usingLocalOcr && (ocrProvider == null || ocrModel.isBlank())) || textProvider == null || textModel.isBlank()) {
                             error("请先在模型设置中配置 OCR 和文本模型")
                         }
+                        if (usingLocalOcr) {
+                            val (ocrText, automationResult) = runLocalOcrThenAutomation(
+                                bitmap = bitmap,
+                                assistant = assistant,
+                                textProvider = textProvider,
+                                textModel = textModel,
+                                firstDeltaTimeoutMillis = firstDeltaTimeoutMillis,
+                                onOcrDelta = { delta ->
+                                    _uiState.update { current ->
+                                        current.copy(liveOcrText = current.liveOcrText + delta)
+                                    }
+                                },
+                                onThoughtDelta = { delta ->
+                                    _uiState.update { current ->
+                                        current.copy(liveAnswerText = current.liveAnswerText + delta)
+                                    }
+                                }
+                            )
+                            val ocrCompleted = baseResult.copy(
+                                detail = "OCR 完成，等待自动动作",
+                                extractedText = ocrText,
+                                automationThought = automationResult.thought,
+                                events = baseResult.events + ProcessingEvent(
+                                    title = "OCR 完成",
+                                    detail = "已提取 ${ocrText.length} 个字符"
+                                )
+                            )
+                            upsertHistory(ocrCompleted)
+                            ProcessingResult(
+                                id = historyId,
+                                assistantName = assistant.name,
+                                route = ProcessingRoute.OCR_THEN_LLM,
+                                status = ProcessingStatus.SUCCESS,
+                                modelSummary = buildModelSummary(textModel, textProvider?.name),
+                                detail = "自动处理完成",
+                                extractedText = ocrText,
+                                answer = "",
+                                automationThought = automationResult.thought,
+                                automationAction = automationResult.action,
+                                screenshotBase64 = screenshotBase64,
+                                events = ocrCompleted.events + ProcessingEvent(
+                                    title = "工具动作完成",
+                                    detail = "${automationResult.action.type}: ${automationResult.action.text}"
+                                ),
+                                createdAtMillis = baseResult.createdAtMillis
+                            )
+                        }
+                        val remoteOcrProvider = requireNotNull(ocrProvider)
                         val (ocrText, automationResult) = gateway.streamOcrThenAutomation(
-                            ocrProvider = ocrProvider,
+                            ocrProvider = remoteOcrProvider,
                             ocrModel = ocrModel,
                             textProvider = textProvider,
                             textModel = textModel,
@@ -674,6 +773,56 @@ internal class OverlayViewModel(
             val history = (listOf(result) + current.history.filterNot { it.id == result.id }).take(20)
             current.copy(lastResult = result, history = history)
         }
+    }
+
+    private suspend fun runLocalOcrThenChat(
+        bitmap: Bitmap,
+        assistant: `fun`.kirari.hanako.data.AssistantPreset,
+        textProvider: `fun`.kirari.hanako.data.ModelProviderConfig?,
+        textModel: String,
+        firstDeltaTimeoutMillis: Long,
+        onOcrDelta: (String) -> Unit,
+        onAnswerDelta: (String) -> Unit
+    ): Pair<String, String> {
+        val provider = requireNotNull(textProvider)
+        val ocrText = withContext(Dispatchers.Default) {
+            localOcrManager.recognize(bitmap)
+        }
+        onOcrDelta(ocrText)
+        val answer = gateway.streamExtractedTextThenChat(
+            textProvider = provider,
+            textModel = textModel,
+            assistant = assistant,
+            extractedText = ocrText,
+            firstDeltaTimeoutMillis = firstDeltaTimeoutMillis,
+            onAnswerDelta = onAnswerDelta
+        )
+        return ocrText to answer
+    }
+
+    private suspend fun runLocalOcrThenAutomation(
+        bitmap: Bitmap,
+        assistant: `fun`.kirari.hanako.data.AssistantPreset,
+        textProvider: `fun`.kirari.hanako.data.ModelProviderConfig?,
+        textModel: String,
+        firstDeltaTimeoutMillis: Long,
+        onOcrDelta: (String) -> Unit,
+        onThoughtDelta: (String) -> Unit
+    ): Pair<String, AutomationResult> {
+        val provider = requireNotNull(textProvider)
+        val ocrText = withContext(Dispatchers.Default) {
+            localOcrManager.recognize(bitmap)
+        }
+        onOcrDelta(ocrText)
+        val result = gateway.streamExtractedTextThenAutomation(
+            textProvider = provider,
+            textModel = textModel,
+            assistant = assistant,
+            extractedText = ocrText,
+            firstDeltaTimeoutMillis = firstDeltaTimeoutMillis,
+            onThoughtDelta = onThoughtDelta
+        )
+        return ocrText to result
     }
 
     companion object {

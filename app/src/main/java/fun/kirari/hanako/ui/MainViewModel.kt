@@ -16,21 +16,31 @@ import `fun`.kirari.hanako.data.SettingsStore
 import `fun`.kirari.hanako.data.defaultAssistant
 import `fun`.kirari.hanako.data.defaultProvider
 import `fun`.kirari.hanako.debug.AppDebugLogStore
+import `fun`.kirari.hanako.data.LOCAL_OCR_MODEL_ID
+import `fun`.kirari.hanako.data.LOCAL_OCR_PROVIDER_ID
 import `fun`.kirari.hanako.data.modelSelectionFor
+import `fun`.kirari.hanako.localocr.LocalOcrManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val store = SettingsStore(application)
+    private val localOcrManager = LocalOcrManager(application)
 
     val settings: StateFlow<AppSettings> = store.settings.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = AppSettings()
     )
+
+    init {
+        syncLocalOcrInstallation()
+    }
 
     fun updateProvider(provider: ModelProviderConfig) {
         viewModelScope.launch {
@@ -158,6 +168,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ModelPurpose.VISION -> current.copy(visionModelSelection = selection)
                     ModelPurpose.OCR -> current.copy(ocrModelSelection = selection)
                 }
+            }
+        }
+    }
+
+
+
+    fun syncLocalOcrInstallation() {
+        viewModelScope.launch {
+            AppDebugLogStore.i("LocalOcrUi", "syncLocalOcrInstallation start")
+            val status = withContext(Dispatchers.IO) { localOcrManager.installationStatus() }
+            AppDebugLogStore.i("LocalOcrUi", "syncLocalOcrInstallation done installed=${status.installed}")
+            store.update { current ->
+                current.copy(
+                    localOcr = current.localOcr.copy(
+                        installed = status.installed,
+                        lastMessage = if (status.installed) "本地 ML Kit 已内置，可直接使用" else "本地 ML Kit 当前不可用"
+                    )
+                )
             }
         }
     }

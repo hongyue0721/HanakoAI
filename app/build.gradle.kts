@@ -58,6 +58,16 @@ android {
             )
         }
     }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -106,6 +116,7 @@ dependencies {
     implementation(libs.jlatexmath.font.cyrillic)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    implementation(libs.mlkit.text.recognition.chinese)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
