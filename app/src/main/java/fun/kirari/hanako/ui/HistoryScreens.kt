@@ -4,15 +4,10 @@ package `fun`.kirari.hanako.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ContentValues
 import android.content.Context
-import android.graphics.Bitmap
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +43,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,8 +55,11 @@ import `fun`.kirari.hanako.data.ProcessingResult
 import `fun`.kirari.hanako.data.ProcessingRoute
 import `fun`.kirari.hanako.data.ProcessingStatus
 import `fun`.kirari.hanako.data.decodeHistoryBitmap
+import `fun`.kirari.hanako.data.loadHistoryBitmap
 import `fun`.kirari.hanako.overlay.MarkdownLatexText
+import `fun`.kirari.hanako.ui.components.ImagePreviewOverlay
 import `fun`.kirari.hanako.ui.components.SectionCard
+import kotlin.math.roundToInt
 
 @Composable
 fun HistorySubScreen(
@@ -69,8 +69,15 @@ fun HistorySubScreen(
     onOpenHistoryDetail: (String) -> Unit
 ) {
     var deleteTargetId by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     val historyStorageText = remember(settings.history) {
-        formatHistorySize(settings.history.sumOf { it.screenshotBase64?.length ?: 0 })
+        val fileBytes = settings.history.sumOf { result ->
+            result.screenshotPath?.let { path ->
+                runCatching { java.io.File(path).length() }.getOrDefault(0)
+            } ?: 0
+        }
+        val base64Bytes = settings.history.sumOf { it.screenshotBase64?.length ?: 0 }.toLong()
+        formatHistorySize(fileBytes + base64Bytes)
     }
 
     LazyColumn(
@@ -159,8 +166,9 @@ private fun HistoryListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    val thumbnail = remember(result.screenshotBase64) {
-        result.screenshotBase64?.decodeHistoryBitmap()
+    val thumbnail = remember(result.screenshotPath, result.screenshotBase64) {
+        result.screenshotPath?.loadHistoryBitmap()
+            ?: result.screenshotBase64?.decodeHistoryBitmap()
     }
 
     Surface(
@@ -251,11 +259,13 @@ fun HistoryDetailScreen(result: ProcessingResult?) {
         return
     }
 
-    val screenshot = remember(result.screenshotBase64) {
-        result.screenshotBase64?.decodeHistoryBitmap()
+    val screenshot = remember(result.screenshotPath, result.screenshotBase64) {
+        result.screenshotPath?.loadHistoryBitmap()
+            ?: result.screenshotBase64?.decodeHistoryBitmap()
     }
     val context = LocalContext.current
     var previewImage by remember(screenshot) { mutableStateOf(false) }
+    var imageBounds by remember { mutableStateOf<android.graphics.Rect?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -276,17 +286,17 @@ fun HistoryDetailScreen(result: ProcessingResult?) {
                     contentDescription = null,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .combinedClickable(
-                            onClick = { previewImage = true },
-                            onLongClick = {
-                                val saved = saveBitmapToPictures(context, bitmap, "hanako_history_${result.id}.png")
-                                Toast.makeText(
-                                    context,
-                                    if (saved) "已保存图片" else "保存失败",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        ),
+                        .onGloballyPositioned { coords ->
+                            val pos = coords.positionInWindow()
+                            val size = coords.size
+                            imageBounds = android.graphics.Rect(
+                                pos.x.roundToInt(),
+                                pos.y.roundToInt(),
+                                (pos.x + size.width).roundToInt(),
+                                (pos.y + size.height).roundToInt()
+                            )
+                        }
+                        .clickable { previewImage = true },
                     contentScale = ContentScale.FillWidth
                 )
             }
@@ -427,30 +437,13 @@ fun HistoryDetailScreen(result: ProcessingResult?) {
         item { Spacer(modifier = Modifier.height(80.dp)) }
     }
 
-    if (previewImage && screenshot != null) {
-        AlertDialog(
-            onDismissRequest = { previewImage = false },
-            confirmButton = {
-                TextButton(onClick = { previewImage = false }) {
-                    Text("关闭")
-                }
-            },
-            text = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.Black)
-                ) {
-                    Image(
-                        bitmap = screenshot.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxWidth(),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-            }
-        )
-    }
+    ImagePreviewOverlay(
+        visible = previewImage && screenshot != null,
+        bitmap = screenshot,
+        fileName = "hanako_history_${result.id}",
+        onDismiss = { previewImage = false },
+        sourceBounds = imageBounds
+    )
 }
 
 private fun historyPreviewText(result: ProcessingResult): String {
@@ -534,8 +527,7 @@ private fun formatHistoryDetailHeader(result: ProcessingResult): String {
     }.joinToString(" · ")
 }
 
-private fun formatHistorySize(charCount: Int): String {
-    val bytes = charCount.toLong()
+private fun formatHistorySize(bytes: Long): String {
     if (bytes < 1024L) return "${bytes}B"
     val kb = bytes / 1024.0
     if (kb < 1024.0) return String.format(java.util.Locale.US, "%.1fKB", kb)
@@ -546,33 +538,4 @@ private fun formatHistorySize(charCount: Int): String {
 private fun copyToClipboard(context: Context, label: String, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
-}
-
-private fun saveBitmapToPictures(context: Context, bitmap: Bitmap, fileName: String): Boolean {
-    val resolver = context.contentResolver
-    val values = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Hanako")
-            put(MediaStore.Images.Media.IS_PENDING, 1)
-        }
-    }
-
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-    return runCatching {
-        resolver.openOutputStream(uri)?.use { output ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
-        } ?: error("openOutputStream failed")
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.clear()
-            values.put(MediaStore.Images.Media.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-        }
-        true
-    }.getOrElse {
-        resolver.delete(uri, null, null)
-        false
-    }
 }

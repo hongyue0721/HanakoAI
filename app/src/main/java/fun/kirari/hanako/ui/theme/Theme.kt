@@ -57,7 +57,9 @@ fun HanakoTheme(
         SideEffect {
             (view.context as? Activity)?.window?.let { window ->
                 window.statusBarColor = colorScheme.surface.toArgb()
+                window.navigationBarColor = colorScheme.surface.toArgb()
                 WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+                WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = !darkTheme
             }
         }
     }

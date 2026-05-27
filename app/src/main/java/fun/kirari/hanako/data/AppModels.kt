@@ -143,6 +143,7 @@ data class ProcessingResult(
     val automationThought: String = "",
     val automationAction: AutomationActionRecord? = null,
     val screenshotBase64: String? = null,
+    val screenshotPath: String? = null,
     val events: List<ProcessingEvent> = emptyList(),
     val createdAtMillis: Long = System.currentTimeMillis()
 )

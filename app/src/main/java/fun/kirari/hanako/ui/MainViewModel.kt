@@ -275,7 +275,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             store.update { it.copy(
                 lastResult = result,
-                history = (listOf(result) + it.history).take(20)
+                history = listOf(result) + it.history
             ) }
         }
     }

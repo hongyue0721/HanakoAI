@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -213,7 +214,7 @@ fun HanakoApp(viewModel: MainViewModel) {
                 AnimatedVisibility(
                     visible = currentRoute == ROUTE_HOME_SHELL,
                     enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut()
+                    exit = shrinkVertically() + fadeOut()
                 ) {
                     NavigationBar {
                         Screen.entries.forEach { screen ->
@@ -599,22 +600,24 @@ private fun MainShellScreen(
         pageCount = { Screen.entries.size }
     )
 
-    var animateTarget by remember { mutableStateOf<Int?>(null) }
+    var isAnimating by remember { mutableStateOf(false) }
 
+    // 用户点击tab时触发动画
     LaunchedEffect(currentScreen) {
         val target = currentScreen.ordinal
-        if (target != pagerState.currentPage || pagerState.currentPageOffsetFraction != 0f) {
-            animateTarget = target
+        if (target != pagerState.currentPage) {
+            isAnimating = true
             try {
                 pagerState.animateScrollToPage(target)
             } finally {
-                animateTarget = null
+                isAnimating = false
             }
         }
     }
 
+    // 手势滑动完成时更新状态，但不触发动画
     LaunchedEffect(pagerState.settledPage) {
-        if (animateTarget != null) return@LaunchedEffect
+        if (isAnimating) return@LaunchedEffect
         val settledScreen = Screen.entries[pagerState.settledPage]
         if (currentScreen != settledScreen) {
             onScreenChange(settledScreen)
@@ -623,7 +626,8 @@ private fun MainShellScreen(
 
     HorizontalPager(
         state = pagerState,
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        userScrollEnabled = true
     ) { page ->
         Box(
             modifier = Modifier

@@ -19,7 +19,7 @@ import `fun`.kirari.hanako.data.ModelSelection
 import `fun`.kirari.hanako.data.resolveModelName
 import `fun`.kirari.hanako.data.resolveModelProvider
 import `fun`.kirari.hanako.data.SettingsStore
-import `fun`.kirari.hanako.data.toHistoryBase64
+import `fun`.kirari.hanako.data.saveToHistoryFile
 import `fun`.kirari.hanako.debug.AppDebugLogStore
 import `fun`.kirari.hanako.localocr.LocalOcrManager
 import `fun`.kirari.hanako.network.AiGateway
@@ -162,7 +162,7 @@ internal class OverlayViewModel(
         val visionModel = state.settings.resolveModelName(ModelPurpose.VISION)
         val firstDeltaTimeoutMillis = state.settings.automation.autoModeTimeoutSeconds.coerceAtLeast(1) * 1000L
         val historyId = java.util.UUID.randomUUID().toString()
-        val screenshotBase64 = bitmap.toHistoryBase64()
+        val screenshotPath = bitmap.saveToHistoryFile(appContext, historyId)
         val baseResult = ProcessingResult(
             id = historyId,
             assistantName = assistant.name,
@@ -173,7 +173,7 @@ internal class OverlayViewModel(
                 ProcessingRoute.MULTIMODAL_DIRECT -> buildModelSummary(visionModel, visionProvider?.name)
             },
             detail = "请求已开始",
-            screenshotBase64 = screenshotBase64,
+            screenshotPath = screenshotPath,
             events = listOf(ProcessingEvent(title = "请求开始", detail = "已创建处理记录"))
         )
 
@@ -236,7 +236,7 @@ internal class OverlayViewModel(
                                     detail = "处理完成",
                                     extractedText = ocrText,
                                     answer = answer,
-                                    screenshotBase64 = screenshotBase64,
+                                    screenshotPath = screenshotPath,
                                     events = ocrCompleted.events + ProcessingEvent(
                                         title = "答案完成",
                                         detail = "已生成 ${answer.length} 个字符"
@@ -282,7 +282,7 @@ internal class OverlayViewModel(
                                 detail = "处理完成",
                                 extractedText = ocrText,
                                 answer = answer,
-                                screenshotBase64 = screenshotBase64,
+                                screenshotPath = screenshotPath,
                                 events = ocrCompleted.events + ProcessingEvent(
                                     title = "答案完成",
                                     detail = "已生成 ${answer.length} 个字符"
@@ -316,7 +316,7 @@ internal class OverlayViewModel(
                                 modelSummary = buildModelSummary(visionModel, visionProvider?.name),
                                 detail = "处理完成",
                                 answer = answer,
-                                screenshotBase64 = screenshotBase64,
+                                screenshotPath = screenshotPath,
                                 events = baseResult.events + ProcessingEvent(
                                     title = "答案完成",
                                     detail = "已生成 ${answer.length} 个字符"
@@ -550,7 +550,7 @@ internal class OverlayViewModel(
         val visionModel = state.settings.resolveModelName(ModelPurpose.VISION)
         val firstDeltaTimeoutMillis = state.settings.automation.autoModeTimeoutSeconds.coerceAtLeast(1) * 1000L
         val historyId = java.util.UUID.randomUUID().toString()
-        val screenshotBase64 = bitmap.toHistoryBase64()
+        val screenshotPath = bitmap.saveToHistoryFile(appContext, historyId)
         val baseResult = ProcessingResult(
             id = historyId,
             assistantName = assistant.name,
@@ -561,7 +561,7 @@ internal class OverlayViewModel(
                 ProcessingRoute.MULTIMODAL_DIRECT -> buildModelSummary(visionModel, visionProvider?.name)
             },
             detail = "自动流程已开始",
-            screenshotBase64 = screenshotBase64,
+            screenshotPath = screenshotPath,
             events = listOf(ProcessingEvent(title = "请求开始", detail = "已创建自动处理记录"))
         )
         upsertHistory(baseResult)
@@ -614,7 +614,7 @@ internal class OverlayViewModel(
                                 answer = "",
                                 automationThought = automationResult.thought,
                                 automationAction = automationResult.action,
-                                screenshotBase64 = screenshotBase64,
+                                screenshotPath = screenshotPath,
                                 events = ocrCompleted.events + ProcessingEvent(
                                     title = "工具动作完成",
                                     detail = "${automationResult.action.type}: ${automationResult.action.text}"
@@ -663,7 +663,7 @@ internal class OverlayViewModel(
                             answer = "",
                             automationThought = automationResult.thought,
                             automationAction = automationResult.action,
-                            screenshotBase64 = screenshotBase64,
+                            screenshotPath = screenshotPath,
                             events = ocrCompleted.events + ProcessingEvent(
                                 title = "工具动作完成",
                                 detail = "${automationResult.action.type}: ${automationResult.action.text}"
@@ -699,7 +699,7 @@ internal class OverlayViewModel(
                             answer = "",
                             automationThought = automationResult.thought,
                             automationAction = automationResult.action,
-                            screenshotBase64 = screenshotBase64,
+                            screenshotPath = screenshotPath,
                             events = baseResult.events + ProcessingEvent(
                                 title = "工具动作完成",
                                 detail = "${automationResult.action.type}: ${automationResult.action.text}"
@@ -770,7 +770,7 @@ internal class OverlayViewModel(
 
     private suspend fun upsertHistory(result: ProcessingResult) {
         store.update { current ->
-            val history = (listOf(result) + current.history.filterNot { it.id == result.id }).take(20)
+            val history = listOf(result) + current.history.filterNot { it.id == result.id }
             current.copy(lastResult = result, history = history)
         }
     }

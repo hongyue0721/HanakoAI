@@ -21,11 +21,12 @@ class SettingsStore(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { preferences ->
         val raw = preferences[SETTINGS_KEY]
-        if (raw.isNullOrBlank()) {
+        val appSettings = if (raw.isNullOrBlank()) {
             AppSettings().normalize()
         } else {
             runCatching { json.decodeFromString<AppSettings>(raw).normalize() }.getOrElse { AppSettings().normalize() }
         }
+        migrateHistoryImages(context, appSettings)
     }
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
@@ -47,5 +48,16 @@ class SettingsStore(private val context: Context) {
 
     companion object {
         private val SETTINGS_KEY = stringPreferencesKey("app_settings")
+
+        private suspend fun migrateHistoryImages(context: Context, settings: AppSettings): AppSettings {
+            val needsMigration = settings.history.any { it.screenshotBase64 != null && it.screenshotPath == null }
+            if (!needsMigration) return settings
+
+            val migratedHistory = settings.history.map { result ->
+                migrateBase64ToFile(context, result)
+            }
+            val migratedLastResult = settings.lastResult?.let { migrateBase64ToFile(context, it) }
+            return settings.copy(history = migratedHistory, lastResult = migratedLastResult)
+        }
     }
 }
