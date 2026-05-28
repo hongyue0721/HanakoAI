@@ -68,6 +68,9 @@ sealed class BubbleEvent {
     /** 双击事件 */
     data object DoubleTap : BubbleEvent()
 
+    /** 取消处理事件 */
+    data object CancelProcessing : BubbleEvent()
+
     /** 重置事件 */
     data object Reset : BubbleEvent()
 
@@ -79,6 +82,9 @@ sealed class BubbleEvent {
 
     /** 截图完成事件 */
     data class CaptureTaken(val bitmap: Bitmap) : BubbleEvent()
+
+    /** 截图失败事件 */
+    data object CaptureFailed : BubbleEvent()
 
     /** 截图成功动画完成事件 */
     data object CaptureSuccessAnimationDone : BubbleEvent()

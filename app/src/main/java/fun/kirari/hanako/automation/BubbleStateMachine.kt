@@ -75,6 +75,9 @@ class BubbleStateMachine {
             
             current is BubbleState.Processing && event is BubbleEvent.Timeout -> 
                 BubbleState.Idle
+            
+            current is BubbleState.Processing && event is BubbleEvent.CancelProcessing -> 
+                BubbleState.Idle
 
             // Copied 状态的转换
             current is BubbleState.Copied && event is BubbleEvent.SingleTap -> 
@@ -109,6 +112,9 @@ class BubbleStateMachine {
                     current.capturedBitmaps + event.bitmap,
                     current.captureCount + 1
                 )
+            
+            current is BubbleState.MultiPageCapturing && event is BubbleEvent.CaptureFailed -> 
+                BubbleState.MultiPageCapture(current.capturedBitmaps, current.captureCount)
             
             current is BubbleState.MultiPageCapturing && event is BubbleEvent.DoubleTap -> 
                 BubbleState.Idle

@@ -25,7 +25,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -36,6 +38,7 @@ internal class OverlayViewModel(
 ) : ViewModel() {
     private val tag = "HanakoOverlayVM"
     private val processingTimeoutMillis = 90_000L
+    private var activeAutoProcessingJob: Job? = null
     
     // 新的状态机
     val bubbleStateMachine = BubbleStateMachine()
@@ -117,7 +120,8 @@ internal class OverlayViewModel(
 
     fun processFullScreen() {
         AppDebugLogStore.i(tag, "processFullScreen start launchMode=${_uiState.value.launchMode}")
-        viewModelScope.launch {
+        activeAutoProcessingJob?.cancel()
+        val job = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     liveOcrText = "",
@@ -140,6 +144,10 @@ internal class OverlayViewModel(
                 AppDebugLogStore.i(tag, "processFullScreen capture success width=${bitmap.width} height=${bitmap.height}")
                 processAutoBitmap(bitmap)
             }.onFailure { error ->
+                if (error is CancellationException) {
+                    AppDebugLogStore.i(tag, "processFullScreen cancelled")
+                    return@onFailure
+                }
                 AppDebugLogStore.e(tag, "processFullScreen failed", error)
                 _uiState.update {
                     it.copy(
@@ -149,6 +157,12 @@ internal class OverlayViewModel(
                     )
                 }
                 bubbleStateMachine.forceState(BubbleState.Idle)
+            }
+        }
+        activeAutoProcessingJob = job
+        job.invokeOnCompletion {
+            if (activeAutoProcessingJob === job) {
+                activeAutoProcessingJob = null
             }
         }
     }
@@ -307,8 +321,8 @@ internal class OverlayViewModel(
                 AppDebugLogStore.e(tag, "capturePage failed", error)
                 _uiState.update { it.copy(error = error.message ?: "截图失败") }
                 // 截图失败，恢复到等待点击状态
-                bubbleStateMachine.dispatch(BubbleEvent.CaptureSuccessAnimationDone)
-                AppDebugLogStore.i(tag, "capturePage failed, dispatched CaptureSuccessAnimationDone")
+                bubbleStateMachine.dispatch(BubbleEvent.CaptureFailed)
+                AppDebugLogStore.i(tag, "capturePage failed, dispatched CaptureFailed")
             }
         }
     }
@@ -333,8 +347,15 @@ internal class OverlayViewModel(
         
         bubbleStateMachine.dispatch(BubbleEvent.SendCaptures)
         AppDebugLogStore.i(tag, "sendCaptures dispatched SendCaptures, new state=${bubbleStateMachine.currentState::class.simpleName}")
-        viewModelScope.launch {
+        activeAutoProcessingJob?.cancel()
+        val job = viewModelScope.launch {
             processAutoBitmaps(bitmaps)
+        }
+        activeAutoProcessingJob = job
+        job.invokeOnCompletion {
+            if (activeAutoProcessingJob === job) {
+                activeAutoProcessingJob = null
+            }
         }
     }
 
@@ -402,10 +423,7 @@ internal class OverlayViewModel(
                 }
             }
             currentState is BubbleState.MultiPageCapturing -> {
-                AppDebugLogStore.i(tag, "handleLongPress MultiPageCapturing bitmaps=${currentState.capturedBitmaps.size}")
-                if (currentState.capturedBitmaps.isNotEmpty()) {
-                    sendCaptures()
-                }
+                AppDebugLogStore.i(tag, "handleLongPress ignored, capturing in progress")
             }
             currentState is BubbleState.MultiPageCaptureSuccess -> {
                 AppDebugLogStore.i(tag, "handleLongPress MultiPageCaptureSuccess bitmaps=${currentState.capturedBitmaps.size}")
@@ -428,6 +446,9 @@ internal class OverlayViewModel(
             is BubbleState.MultiPageCapturing,
             is BubbleState.MultiPageCaptureSuccess -> {
                 exitMultiPageCaptureMode()
+            }
+            is BubbleState.Processing -> {
+                cancelActiveAutoProcessing()
             }
             else -> {}
         }
@@ -560,8 +581,30 @@ internal class OverlayViewModel(
                 }
             }
         }.onFailure { error ->
+            if (error is CancellationException) {
+                AppDebugLogStore.i(tag, "processAutoBitmaps cancelled")
+                return
+            }
             AppDebugLogStore.e(tag, "processAutoBitmaps failed", error)
             handleError(error, baseResult, isAutoMode = true)
+        }
+    }
+
+    private fun cancelActiveAutoProcessing() {
+        AppDebugLogStore.i(tag, "cancelActiveAutoProcessing")
+        activeAutoProcessingJob?.cancel()
+        activeAutoProcessingJob = null
+        _uiState.update {
+            it.copy(
+                working = false,
+                autoRunState = AutoRunState.IDLE,
+                autoCopiedLabel = null,
+                error = null
+            )
+        }
+        bubbleStateMachine.dispatch(BubbleEvent.CancelProcessing)
+        if (bubbleStateMachine.currentState !is BubbleState.Idle) {
+            bubbleStateMachine.forceState(BubbleState.Idle)
         }
     }
 
