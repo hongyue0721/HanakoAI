@@ -7,6 +7,7 @@ import `fun`.kirari.hanako.HanakoApplication
 import `fun`.kirari.hanako.data.AppSettings
 import `fun`.kirari.hanako.data.AssistantPreset
 import `fun`.kirari.hanako.data.AutomationSettings
+import `fun`.kirari.hanako.data.WebSearchSettings
 import `fun`.kirari.hanako.data.ModelPurpose
 import `fun`.kirari.hanako.data.ModelProviderConfig
 import `fun`.kirari.hanako.data.ModelSelection
@@ -224,6 +225,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setTrustAllHttpsCertificates(enabled: Boolean) {
         viewModelScope.launch {
             repository.update { it.copy(trustAllHttpsCertificates = enabled) }
+        }
+    }
+
+    fun updateWebSearchSettings(transform: (WebSearchSettings) -> WebSearchSettings) {
+        viewModelScope.launch {
+            repository.update { current ->
+                current.copy(webSearch = transform(current.webSearch))
+            }
         }
     }
 

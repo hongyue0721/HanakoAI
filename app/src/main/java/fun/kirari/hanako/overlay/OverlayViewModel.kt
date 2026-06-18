@@ -201,7 +201,7 @@ internal class OverlayViewModel(
                     when (models.route) {
                         ProcessingRoute.OCR_THEN_LLM -> {
                             pipeline.validateOcrThenLlmModels(models)
-                            val (ocrText, answer) = pipeline.streamOcrThenChat(
+                            val (ocrText, answer, searchOutcome) = pipeline.streamOcrThenChat(
                                 models = models,
                                 bitmaps = bitmaps,
                                 onOcrDelta = { delta ->
@@ -211,7 +211,7 @@ internal class OverlayViewModel(
                                     _uiState.update { current -> current.copy(liveAnswerText = current.liveAnswerText + delta) }
                                 }
                             )
-                            pipeline.buildChatResult(baseResult, models, ocrText, answer, historyId, screenshotPaths)
+                            pipeline.buildChatResult(baseResult, models, ocrText, answer, historyId, screenshotPaths, searchOutcome)
                         }
 
                         ProcessingRoute.MULTIMODAL_DIRECT -> {
@@ -518,7 +518,7 @@ internal class OverlayViewModel(
                 val (action, result) = when (models.route) {
                     ProcessingRoute.OCR_THEN_LLM -> {
                         pipeline.validateOcrThenLlmModels(models)
-                        val (ocrText, automationResult) = pipeline.streamOcrThenAutomation(
+                        val (ocrText, automationResult, searchOutcome) = pipeline.streamOcrThenAutomation(
                             models = models,
                             bitmaps = bitmaps,
                             onOcrDelta = { delta ->
@@ -528,7 +528,7 @@ internal class OverlayViewModel(
                                 _uiState.update { current -> current.copy(liveAnswerText = current.liveAnswerText + delta) }
                             }
                         )
-                        pipeline.buildAutomationResult(baseResult, models, ocrText, automationResult, historyId, screenshotPaths)
+                        pipeline.buildAutomationResult(baseResult, models, ocrText, automationResult, historyId, screenshotPaths, searchOutcome)
                     }
 
                     ProcessingRoute.MULTIMODAL_DIRECT -> {
@@ -652,7 +652,7 @@ internal class OverlayViewModel(
                     return OverlayViewModel(
                         appContext = appContext,
                         repository = container.settingsRepository,
-                        pipeline = ProcessingPipeline(appContext, container.unifiedLLMClient, container.localOcrManager)
+                        pipeline = ProcessingPipeline(appContext, container.unifiedLLMClient, container.localOcrManager, container.searchOrchestrator)
                     ) as T
                 }
             }
