@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -52,6 +53,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import `fun`.kirari.hanako.data.AppSettings
 import `fun`.kirari.hanako.data.AssistantPreset
@@ -61,6 +64,9 @@ import `fun`.kirari.hanako.data.AutomationSettings
 import `fun`.kirari.hanako.data.ModelProviderConfig
 import `fun`.kirari.hanako.data.ModelPurpose
 import `fun`.kirari.hanako.data.ScreenCaptureMethod
+import `fun`.kirari.hanako.data.SearchProviderKind
+import `fun`.kirari.hanako.data.WebSearchSettings
+import `fun`.kirari.hanako.data.defaultBaseUrl
 import `fun`.kirari.hanako.data.description
 import `fun`.kirari.hanako.data.displayName
 import `fun`.kirari.hanako.data.resolveModelName
@@ -123,10 +129,12 @@ fun MoreSettingsScreen(
     automationSettings: AutomationSettings,
     selectedMethod: ScreenCaptureMethod,
     trustAllHttpsCertificates: Boolean,
+    webSearchSettings: WebSearchSettings,
     onToggleCompletionNotification: (Boolean) -> Unit,
     onUpdateTimeoutSeconds: (Int) -> Unit,
     onSelectMethod: (ScreenCaptureMethod) -> Unit,
-    onToggleTrustAllHttpsCertificates: (Boolean) -> Unit
+    onToggleTrustAllHttpsCertificates: (Boolean) -> Unit,
+    onUpdateWebSearchSettings: ((WebSearchSettings) -> WebSearchSettings) -> Unit
 ) {
     var timeoutInput by remember(automationSettings.autoModeTimeoutSeconds) {
         mutableStateOf(automationSettings.autoModeTimeoutSeconds.toString())
@@ -250,6 +258,184 @@ fun MoreSettingsScreen(
                         checked = trustAllHttpsCertificates,
                         onCheckedChange = onToggleTrustAllHttpsCertificates
                     )
+                }
+            }
+        }
+
+        item {
+            MoreSettingCard(
+                icon = Icons.Default.Search,
+                title = "联网搜索",
+                subtitle = "LLM 自主判断时效性题目并联网搜索最新资料。"
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "启用联网搜索",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "开启后 LLM 会自行判断题目是否需要搜索。时政类题目会自动触发，普通题目不受影响。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = webSearchSettings.enabled,
+                            onCheckedChange = { enabled ->
+                                onUpdateWebSearchSettings { it.copy(enabled = enabled) }
+                            }
+                        )
+                    }
+
+                    if (webSearchSettings.enabled) {
+                        Text(
+                            "联网搜索仅在 OCR → 文本模型 路由下可用，多模态直接模式不支持。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    var providerMenuExpanded by remember { mutableStateOf(false) }
+                    var apiKeyVisible by remember { mutableStateOf(false) }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "搜索引擎",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = webSearchSettings.enabled) { providerMenuExpanded = true },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (webSearchSettings.enabled) {
+                                MaterialTheme.colorScheme.surfaceContainerLow
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = webSearchSettings.provider.kind.displayName,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = providerMenuExpanded,
+                            onDismissRequest = { providerMenuExpanded = false }
+                        ) {
+                            SearchProviderKind.entries.forEach { kind ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(kind.displayName) },
+                                    onClick = {
+                                        onUpdateWebSearchSettings {
+                                            it.copy(
+                                                provider = it.provider.copy(
+                                                    kind = kind,
+                                                    baseUrl = kind.defaultBaseUrl
+                                                )
+                                            )
+                                        }
+                                        providerMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = webSearchSettings.provider.baseUrl,
+                        onValueChange = { value ->
+                            onUpdateWebSearchSettings {
+                                it.copy(provider = it.provider.copy(baseUrl = value))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = webSearchSettings.enabled,
+                        singleLine = true,
+                        label = { Text("API Base URL") }
+                    )
+
+                    OutlinedTextField(
+                        value = webSearchSettings.provider.apiKey,
+                        onValueChange = { value ->
+                            onUpdateWebSearchSettings {
+                                it.copy(provider = it.provider.copy(apiKey = value))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = webSearchSettings.enabled,
+                        singleLine = true,
+                        label = { Text("API Key") },
+                        visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            TextButton(
+                                onClick = { apiKeyVisible = !apiKeyVisible },
+                                enabled = webSearchSettings.enabled
+                            ) {
+                                Text(if (apiKeyVisible) "隐藏" else "显示")
+                            }
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "自动模式也使用联网搜索",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "开启后，自动模式下时效性题会增加约 2-4 秒延迟。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = webSearchSettings.automationAlsoSearch,
+                            enabled = webSearchSettings.enabled,
+                            onCheckedChange = { enabled ->
+                                onUpdateWebSearchSettings { it.copy(automationAlsoSearch = enabled) }
+                            }
+                        )
+                    }
                 }
             }
         }

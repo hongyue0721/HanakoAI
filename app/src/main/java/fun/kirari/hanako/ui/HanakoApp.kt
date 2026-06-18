@@ -382,6 +382,7 @@ fun HanakoApp(viewModel: MainViewModel) {
                         automationSettings = settings.automation,
                         selectedMethod = settings.screenCaptureMethod,
                         trustAllHttpsCertificates = settings.trustAllHttpsCertificates,
+                        webSearchSettings = settings.webSearch,
                         onToggleCompletionNotification = { enabled ->
                             viewModel.updateAutomationSettings {
                                 it.copy(completionNotificationEnabled = enabled)
@@ -393,7 +394,8 @@ fun HanakoApp(viewModel: MainViewModel) {
                                 it.copy(autoModeTimeoutSeconds = seconds)
                             }
                         },
-                        onToggleTrustAllHttpsCertificates = viewModel::setTrustAllHttpsCertificates
+                        onToggleTrustAllHttpsCertificates = viewModel::setTrustAllHttpsCertificates,
+                        onUpdateWebSearchSettings = viewModel::updateWebSearchSettings
                     )
                 }
                 composable(ROUTE_SETTINGS_DEBUG_LOGS) {

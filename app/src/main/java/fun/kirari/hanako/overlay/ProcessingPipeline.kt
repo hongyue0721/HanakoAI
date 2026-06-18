@@ -14,6 +14,7 @@ import `fun`.kirari.hanako.data.ProcessingEvent
 import `fun`.kirari.hanako.data.ProcessingResult
 import `fun`.kirari.hanako.data.ProcessingRoute
 import `fun`.kirari.hanako.data.ProcessingStatus
+import `fun`.kirari.hanako.data.WebSearchSettings
 import `fun`.kirari.hanako.data.resolveModelName
 import `fun`.kirari.hanako.data.resolveModelProvider
 import `fun`.kirari.hanako.data.saveToHistoryFile
@@ -23,6 +24,10 @@ import `fun`.kirari.hanako.network.LlmEvent
 import `fun`.kirari.hanako.network.ToolDef
 import `fun`.kirari.hanako.network.ToolRegistry
 import `fun`.kirari.hanako.network.UnifiedLLMClient
+import `fun`.kirari.hanako.network.search.SearchContext
+import `fun`.kirari.hanako.network.search.SearchOrchestrator
+import `fun`.kirari.hanako.network.search.SearchOutcome
+import `fun`.kirari.hanako.network.search.SearchSkipReason
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -30,7 +35,8 @@ import kotlinx.serialization.json.JsonObject
 internal class ProcessingPipeline(
     private val appContext: Context,
     private val unifiedClient: UnifiedLLMClient,
-    private val localOcrManager: LocalOcrManager
+    private val localOcrManager: LocalOcrManager,
+    private val searchOrchestrator: SearchOrchestrator
 ) {
     private val tag = "HanakoPipeline"
 
@@ -45,7 +51,10 @@ internal class ProcessingPipeline(
         val firstDeltaTimeoutMillis: Long,
         val route: ProcessingRoute,
         val usingLocalOcr: Boolean,
-        val trustAllHttpsCertificates: Boolean
+        val trustAllHttpsCertificates: Boolean,
+        val webSearchSettings: WebSearchSettings,
+        val searchProvider: ModelProviderConfig?,
+        val searchModel: String
     )
 
     fun resolveModels(state: OverlayUiState): ResolvedModels {
@@ -62,7 +71,10 @@ internal class ProcessingPipeline(
             firstDeltaTimeoutMillis = state.settings.automation.autoModeTimeoutSeconds.coerceAtLeast(1) * 1000L,
             route = state.settings.processingRoute,
             usingLocalOcr = state.settings.ocrModelSelection.providerId == LOCAL_OCR_PROVIDER_ID,
-            trustAllHttpsCertificates = state.settings.trustAllHttpsCertificates
+            trustAllHttpsCertificates = state.settings.trustAllHttpsCertificates,
+            webSearchSettings = state.settings.webSearch,
+            searchProvider = state.settings.resolveModelProvider(ModelPurpose.TEXT),
+            searchModel = state.settings.resolveModelName(ModelPurpose.TEXT)
         )
     }
 
@@ -200,12 +212,62 @@ internal class ProcessingPipeline(
         )
     }
 
+    private suspend fun maybeSearch(
+        models: ResolvedModels,
+        questionText: String,
+        isAutomation: Boolean
+    ): SearchOutcome {
+        val provider = models.searchProvider ?: return SearchOutcome(
+            performed = false,
+            results = emptyList(),
+            formattedText = null,
+            keywords = null,
+            skipReason = null
+        )
+        return searchOrchestrator.execute(
+            SearchContext(
+                questionText = questionText,
+                settings = models.webSearchSettings,
+                llmProvider = provider,
+                llmModel = models.searchModel,
+                trustAllHttps = models.trustAllHttpsCertificates,
+                isAutomation = isAutomation,
+                firstDeltaTimeoutMillis = models.firstDeltaTimeoutMillis
+            )
+        )
+    }
+
+    private fun buildEnhancedUserPrompt(basePrompt: String, outcome: SearchOutcome): String {
+        if (outcome.formattedText == null) return basePrompt
+        return "${outcome.formattedText}\n\n$basePrompt"
+    }
+
+    private fun searchEvent(outcome: SearchOutcome): ProcessingEvent? {
+        if (!outcome.performed) {
+            return outcome.skipReason?.let { reason ->
+                when (reason) {
+                    SearchSkipReason.LLM_JUDGE_NO_SEARCH,
+                    SearchSkipReason.LLM_JUDGE_FAILED,
+                    SearchSkipReason.LLM_NO_KEYWORDS,
+                    SearchSkipReason.SEARCH_API_ERROR,
+                    SearchSkipReason.SEARCH_NO_RESULTS ->
+                        ProcessingEvent(title = "联网搜索", detail = reason.displayText)
+                    else -> null
+                }
+            }
+        }
+        return ProcessingEvent(
+            title = "联网搜索",
+            detail = "关键词: ${outcome.keywords.orEmpty()}，获取 ${outcome.results.size} 条结果"
+        )
+    }
+
     suspend fun streamOcrThenChat(
         models: ResolvedModels,
         bitmaps: List<Bitmap>,
         onOcrDelta: (String) -> Unit,
         onAnswerDelta: (String) -> Unit
-    ): Pair<String, String> {
+    ): Triple<String, String, SearchOutcome> {
         AppDebugLogStore.i(tag, "streamOcrThenChat ocrModel=${models.ocrModel} textModel=${models.textModel} imageCount=${bitmaps.size}")
         val ocrTexts = mutableListOf<String>()
         bitmaps.forEach { bitmap ->
@@ -227,18 +289,22 @@ internal class ProcessingPipeline(
         }
         val combinedOcrText = ocrTexts.joinToString("\n\n---\n\n")
         onOcrDelta(combinedOcrText)
-        
+
+        val searchOutcome = maybeSearch(models, combinedOcrText, isAutomation = false)
+        val baseUserPrompt = "以下是 OCR 结果，请完成任务：\n$combinedOcrText"
+        val userPrompt = buildEnhancedUserPrompt(baseUserPrompt, searchOutcome)
+
         val answer = collectTextStream(
             provider = requireNotNull(models.textProvider),
             model = models.textModel,
             systemPrompt = assistantPromptWithCopyMarker(models.assistant.textPrompt),
-            userPrompt = "以下是 OCR 结果，请完成任务：\n$combinedOcrText",
+            userPrompt = userPrompt,
             firstDeltaTimeoutMillis = models.firstDeltaTimeoutMillis,
             trustAllHttpsCertificates = models.trustAllHttpsCertificates,
             onDelta = onAnswerDelta
         )
         AppDebugLogStore.i(tag, "streamOcrThenChat success ocrLength=${combinedOcrText.length} answerLength=${answer.length}")
-        return combinedOcrText to answer
+        return Triple(combinedOcrText, answer, searchOutcome)
     }
 
     suspend fun streamVisionDirect(
@@ -267,7 +333,7 @@ internal class ProcessingPipeline(
         bitmaps: List<Bitmap>,
         onOcrDelta: (String) -> Unit,
         onThoughtDelta: (String) -> Unit
-    ): Pair<String, AutomationResult> {
+    ): Triple<String, AutomationResult, SearchOutcome> {
         AppDebugLogStore.i(tag, "streamOcrThenAutomation ocrModel=${models.ocrModel} textModel=${models.textModel} imageCount=${bitmaps.size}")
         val ocrTexts = mutableListOf<String>()
         bitmaps.forEach { bitmap ->
@@ -289,18 +355,23 @@ internal class ProcessingPipeline(
         }
         val combinedOcrText = ocrTexts.joinToString("\n\n---\n\n")
         onOcrDelta(combinedOcrText)
+
+        val searchOutcome = maybeSearch(models, combinedOcrText, isAutomation = true)
+        val baseUserPrompt = "以下是 OCR 结果，请先输出思考过程，再通过一次工具调用给出自动模式动作：\n$combinedOcrText"
+        val userPrompt = buildEnhancedUserPrompt(baseUserPrompt, searchOutcome)
+
         val streamResult = collectToolStream(
             provider = requireNotNull(models.textProvider),
             model = models.textModel,
             systemPrompt = automationSystemPrompt(models.assistant.textPrompt),
-            userPrompt = "以下是 OCR 结果，请先输出思考过程，再通过一次工具调用给出自动模式动作：\n$combinedOcrText",
+            userPrompt = userPrompt,
             firstDeltaTimeoutMillis = models.firstDeltaTimeoutMillis,
             trustAllHttpsCertificates = models.trustAllHttpsCertificates,
             onThoughtDelta = onThoughtDelta
         )
         val result = buildAutomationResult(streamResult)
         AppDebugLogStore.i(tag, "streamOcrThenAutomation success ocrLength=${combinedOcrText.length} thoughtLength=${result.thought.length} action=${result.action.type}")
-        return combinedOcrText to result
+        return Triple(combinedOcrText, result, searchOutcome)
     }
 
     suspend fun streamAutomationDirect(
@@ -331,12 +402,14 @@ internal class ProcessingPipeline(
         ocrText: String,
         answer: String,
         historyId: String,
-        screenshotPaths: List<String>
+        screenshotPaths: List<String>,
+        searchOutcome: SearchOutcome? = null
     ): ProcessingResult {
         val events = base.events.toMutableList()
         if (models.route == ProcessingRoute.OCR_THEN_LLM) {
             events.add(ProcessingEvent(title = "OCR 完成", detail = "已提取 ${ocrText.length} 个字符"))
         }
+        searchOutcome?.let { searchEvent(it) }?.let { events.add(it) }
         events.add(ProcessingEvent(title = "答案完成", detail = "已生成 ${answer.length} 个字符"))
         return ProcessingResult(
             id = historyId,
@@ -363,12 +436,14 @@ internal class ProcessingPipeline(
         ocrText: String,
         automationResult: AutomationResult,
         historyId: String,
-        screenshotPaths: List<String>
+        screenshotPaths: List<String>,
+        searchOutcome: SearchOutcome? = null
     ): Pair<AutomationActionRecord, ProcessingResult> {
         val events = base.events.toMutableList()
         if (models.route == ProcessingRoute.OCR_THEN_LLM) {
             events.add(ProcessingEvent(title = "OCR 完成", detail = "已提取 ${ocrText.length} 个字符"))
         }
+        searchOutcome?.let { searchEvent(it) }?.let { events.add(it) }
         events.add(
             ProcessingEvent(
                 title = "工具动作完成",
