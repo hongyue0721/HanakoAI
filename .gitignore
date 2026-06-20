@@ -18,3 +18,14 @@
 local.properties
 keystore.properties
 /release.jks
+
+# 本地 JDK
+.jdk/
+
+# 构建产物 APK
+*.apk
+
+# 临时文档
+/PR_DESCRIPTION.md
+/REVIEW_ISSUES.md
+/plan.md
