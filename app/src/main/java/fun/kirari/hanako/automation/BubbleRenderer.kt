@@ -37,6 +37,8 @@ internal object BubbleRenderer {
             is BubbleState.MultiPageCapture -> renderMultiPageCapture(state, context)
             is BubbleState.MultiPageCapturing -> renderMultiPageCapturing(state, context)
             is BubbleState.MultiPageCaptureSuccess -> renderMultiPageCaptureSuccess(state, context)
+            is BubbleState.MenuExpanded -> renderMenuExpanded(state, launchMode, context)
+            is BubbleState.Error -> renderError(context)
         }
     }
 
@@ -136,6 +138,32 @@ internal object BubbleRenderer {
         )
     }
 
+    private fun renderMenuExpanded(
+        state: BubbleState.MenuExpanded,
+        launchMode: OverlayLaunchMode,
+        context: Context
+    ): BubbleAppearance {
+        // 防御：如果 previousState 仍是 MenuExpanded（理论上不会发生），降级为 Idle 避免无限递归
+        val prev = if (state.previousState is BubbleState.MenuExpanded) BubbleState.Idle else state.previousState
+        // 保持之前状态的背景色，图标换成菜单图标
+        val baseAppearance = render(prev, launchMode, context)
+        return baseAppearance.copy(
+            iconRes = R.drawable.ic_bubble_menu,
+            letters = null
+        )
+    }
+
+    private fun renderError(context: Context): BubbleAppearance {
+        return BubbleAppearance(
+            backgroundColor = Color.parseColor("#B3261E"),
+            iconTint = Color.WHITE,
+            iconRes = R.drawable.ic_bubble_error,
+            spinnerColor = Color.WHITE,
+            showSpinner = false,
+            letters = null
+        )
+    }
+
     /**
      * 检查是否显示加载动画
      */
@@ -155,6 +183,8 @@ internal object BubbleRenderer {
             is BubbleState.MultiPageCapture -> "MultiPageCapture(count=${state.captureCount})"
             is BubbleState.MultiPageCapturing -> "MultiPageCapturing(count=${state.captureCount})"
             is BubbleState.MultiPageCaptureSuccess -> "MultiPageCaptureSuccess(count=${state.captureCount})"
+            is BubbleState.MenuExpanded -> "MenuExpanded(prev=${state.previousState::class.simpleName})"
+            is BubbleState.Error -> "Error(${state.message})"
         }
     }
 }

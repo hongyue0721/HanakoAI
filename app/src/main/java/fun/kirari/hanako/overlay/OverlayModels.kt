@@ -40,7 +40,9 @@ internal data class OverlayUiState(
     val launchMode: OverlayLaunchMode = OverlayLaunchMode.NORMAL,
     val autoRunState: AutoRunState = AutoRunState.IDLE,
     val autoCopiedLabel: String? = null,
-    val bubbleState: BubbleState = BubbleState.Idle
+    val bubbleState: BubbleState = BubbleState.Idle,
+    val bubbleScreenX: Int = 0,
+    val bubbleScreenY: Int = 0
 )
 
 
