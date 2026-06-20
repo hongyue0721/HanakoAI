@@ -205,11 +205,19 @@ internal class ProcessingPipeline(
     }
 
     private fun buildAutomationResult(streamResult: StreamResult): AutomationResult {
-        val tc = streamResult.toolCall ?: error("自动模式未调用工具")
-        return AutomationResult(
-            thought = streamResult.thought,
-            action = validateAutomationAction(tc.name, tc.arguments["text"]?.toString()?.trim('"').orEmpty())
-        )
+        val tc = streamResult.toolCall
+        return if (tc != null) {
+            AutomationResult(
+                thought = streamResult.thought,
+                action = validateAutomationAction(tc.name, tc.arguments["text"]?.toString()?.trim('"').orEmpty())
+            )
+        } else {
+            // 兜底：LLM 未调用工具，将其文本回答放入剪贴板
+            AutomationResult(
+                thought = streamResult.thought,
+                action = validateAutomationAction("set_clipboard", streamResult.thought)
+            )
+        }
     }
 
     private suspend fun maybeSearch(
@@ -494,7 +502,7 @@ private fun automationSystemPrompt(userPrompt: String): String {
         思考过程结束后，你必须且只能调用一个工具，不能在工具调用后继续输出额外文本。
         当答案适合直接填写到输入框、文本框、填空题空格时，调用 set_clipboard。
         当答案适合让用户直接在悬浮球上查看选项字母时，调用 show_bubble_letters。
-        show_bubble_letters 的 text 参数只能包含英文字母 A-Z，长度为 1 到 4，不能包含空格、标点、中文或解释。
+        show_bubble_letters 的 text 参数只能是 1-8 个英文字母（大小写均可），或'对'、'错'、'√'、'×'，不能包含空格、标点、中文解释或其他内容。
         set_clipboard 的 text 参数必须是用户可以直接粘贴使用的最终答案。
         不允许调用多个工具，不允许省略工具调用。
 
