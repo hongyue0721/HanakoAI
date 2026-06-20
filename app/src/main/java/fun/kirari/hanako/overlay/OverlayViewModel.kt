@@ -473,8 +473,11 @@ internal class OverlayViewModel(
             is BubbleState.Processing -> {
                 cancelActiveAutoProcessing()
             }
-            is BubbleState.Idle -> {
-                // Idle 双击展开菜单
+            is BubbleState.Idle,
+            is BubbleState.ShowingLetters,
+            is BubbleState.Copied,
+            is BubbleState.Error -> {
+                // 双击展开菜单
                 val pos = _uiState.value
                 bubbleStateMachine.dispatch(BubbleEvent.LongPress(pos.bubbleScreenX, pos.bubbleScreenY))
             }
