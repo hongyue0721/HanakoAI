@@ -40,13 +40,14 @@ object BubbleMenuRegistry {
             iconRes = R.drawable.ic_bubble_search,
             isChecked = { it.webSearch.enabled }
         ),
-        BubbleMenuEntry(
-            item = BubbleMenuItem.VoiceRecognition,
-            label = "语音",
-            iconRes = R.drawable.ic_bubble_mic,
-            isEnabled = { false },
-            isChecked = { false }
-        ),
+        // 语音识别功能暂未实现，暂时屏蔽，后续直接取消注释即可恢复
+        // BubbleMenuEntry(
+        //     item = BubbleMenuItem.VoiceRecognition,
+        //     label = "语音",
+        //     iconRes = R.drawable.ic_bubble_mic,
+        //     isEnabled = { false },
+        //     isChecked = { false }
+        // ),
         BubbleMenuEntry(
             item = BubbleMenuItem.Settings,
             label = "设置",
