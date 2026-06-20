@@ -28,6 +28,9 @@ import `fun`.kirari.hanako.automation.BubbleRenderer
 import `fun`.kirari.hanako.automation.BubbleState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -275,16 +278,15 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
             addView(textView)
         }
         val density = resources.displayMetrics.density
-        val shadowSizePx = (surfaceSizePx + (6f * density).roundToInt())
+        val shadowSizePx = (surfaceSizePx + (3f * density).roundToInt())
         val shadowView = View(this).apply {
             layoutParams = FrameLayout.LayoutParams(shadowSizePx, shadowSizePx, Gravity.CENTER)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.parseColor("#20000000"))
             }
-            translationX = 1f * density
-            translationY = 3f * density
-            alpha = 0.7f
+            translationY = 1.5f * density
+            alpha = 0.45f
         }
         val countSizePx = (18f * density).roundToInt()
         val countView = TextView(this).apply {
@@ -705,9 +707,11 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                 icon.animate().cancel()
                 icon.animate()
                     .alpha(0f)
-                    .scaleX(0.82f)
-                    .scaleY(0.82f)
-                    .setDuration(120L)
+                    .scaleX(0.7f)
+                    .scaleY(0.7f)
+                    .rotation(-45f)
+                    .setDuration(90L)
+                    .setInterpolator(android.view.animation.AccelerateInterpolator())
                     .withEndAction {
                         icon.setImageDrawable(ContextCompat.getDrawable(this, appearance.iconRes))
                         icon.imageTintList = ColorStateList.valueOf(appearance.iconTint)
@@ -716,7 +720,9 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                             .alpha(1f)
                             .scaleX(1f)
                             .scaleY(1f)
+                            .rotation(0f)
                             .setDuration(180L)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(1.6f))
                             .start()
                     }
                     .start()
@@ -805,6 +811,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                     val uiState by overlayViewModel.uiState.collectAsState()
                     val bubbleState = uiState.bubbleState
                     if (bubbleState is BubbleState.MenuExpanded) {
+                        var closing by remember { mutableStateOf(false) }
                         BubbleMenu(
                             anchorX = bubbleState.anchorX,
                             anchorY = bubbleState.anchorY,
@@ -813,6 +820,10 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                                 overlayViewModel.handleMenuSelect(item)
                             },
                             onDismiss = {
+                                closing = true
+                            },
+                            onDismissFinished = {
+                                closing = false
                                 overlayViewModel.handleSingleTap()
                             }
                         )

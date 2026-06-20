@@ -29,11 +29,6 @@ data class BubbleMenuEntry(
 object BubbleMenuRegistry {
     val entries: List<BubbleMenuEntry> = listOf(
         BubbleMenuEntry(
-            item = BubbleMenuItem.MultiPage,
-            label = "多图",
-            iconRes = R.drawable.ic_bubble_multi
-        ),
-        BubbleMenuEntry(
             item = BubbleMenuItem.ToggleRoute,
             label = "视觉",
             iconRes = R.drawable.ic_bubble_route,

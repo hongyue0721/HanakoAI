@@ -282,19 +282,19 @@ fun HeroSection(
                     !overlayEnabled
                 ) {
                     Text(
-                        "提示：点击启动进入普通模式，长按启动进入自动模式；悬浮球单击截图、长按/普通模式双击展开菜单；Android 14+ 首次会弹出截屏授权。",
+                        "提示：点击启动进入普通模式，长按启动进入自动模式；悬浮球单击截图；Android 14+ 首次会弹出截屏授权。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                     )
                 } else if (captureMethod == ScreenCaptureMethod.SHIZUKU_ADB && !overlayEnabled) {
                     Text(
-                        "提示：当前使用 Shizuku 路线。启动时会先申请 Shizuku 授权，后续截图走 shell screencap；悬浮球单击截图、长按/普通模式双击展开菜单。",
+                        "提示：当前使用 Shizuku 路线。启动时会先申请 Shizuku 授权，后续截图走 shell screencap；悬浮球单击截图。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                     )
                 } else if (!overlayEnabled) {
                     Text(
-                        "点击启动进入普通模式，长按启动进入自动模式；悬浮球单击截图、长按/普通模式双击展开菜单。",
+                        "点击启动进入普通模式，长按启动进入自动模式；悬浮球单击截图。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                     )
