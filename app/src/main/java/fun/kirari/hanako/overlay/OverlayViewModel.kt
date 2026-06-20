@@ -2,11 +2,13 @@ package `fun`.kirari.hanako.overlay
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import `fun`.kirari.hanako.AppContainer
 import `fun`.kirari.hanako.automation.BubbleEvent
+import `fun`.kirari.hanako.automation.BubbleMenuItem
 import `fun`.kirari.hanako.automation.BubbleState
 import `fun`.kirari.hanako.automation.BubbleStateMachine
 import `fun`.kirari.hanako.data.AutomationActionType
@@ -266,6 +268,15 @@ internal class OverlayViewModel(
         }
     }
 
+    /**
+     * 将气泡状态重置为 Idle，用于 Error 状态的自动恢复
+     */
+    fun resetBubbleState() {
+        val currentState = bubbleStateMachine.currentState
+        AppDebugLogStore.i(tag, "resetBubbleState from ${currentState::class.simpleName}")
+        bubbleStateMachine.dispatch(BubbleEvent.Reset)
+    }
+
     fun onBubbleTappedAfterLettersShown() {
         val currentState = bubbleStateMachine.currentState
         AppDebugLogStore.i(tag, "onBubbleTappedAfterLettersShown launchMode=${_uiState.value.launchMode} bubble=${currentState::class.simpleName}")
@@ -283,7 +294,7 @@ internal class OverlayViewModel(
      */
     fun enterMultiPageCaptureMode() {
         AppDebugLogStore.i(tag, "enterMultiPageCaptureMode")
-        bubbleStateMachine.dispatch(BubbleEvent.LongPress)
+        bubbleStateMachine.dispatch(BubbleEvent.EnterMultiPageCapture)
     }
 
     /**
@@ -373,7 +384,7 @@ internal class OverlayViewModel(
     fun handleSingleTap() {
         val currentState = bubbleStateMachine.currentState
         AppDebugLogStore.i(tag, "handleSingleTap state=${currentState::class.simpleName}")
-        
+
         when (currentState) {
             is BubbleState.MultiPageCapture -> {
                 // 多页截图模式下，单击截图
@@ -391,6 +402,14 @@ internal class OverlayViewModel(
                 // 已复制状态下，单击重置
                 bubbleStateMachine.dispatch(BubbleEvent.SingleTap)
             }
+            is BubbleState.Error -> {
+                // 错误状态下单击重置
+                bubbleStateMachine.dispatch(BubbleEvent.SingleTap)
+            }
+            is BubbleState.MenuExpanded -> {
+                // 菜单展开时，单击关闭菜单
+                bubbleStateMachine.dispatch(BubbleEvent.CloseMenu)
+            }
             else -> {
                 // 其他状态（Idle、ShowingLetters、Processing 等），打开裁剪页面
                 openCropSheet()
@@ -403,33 +422,36 @@ internal class OverlayViewModel(
      */
     fun handleLongPress() {
         val currentState = bubbleStateMachine.currentState
-        val launchMode = _uiState.value.launchMode
-        AppDebugLogStore.i(tag, "handleLongPress state=${currentState::class.simpleName} launchMode=$launchMode")
-        
-        when {
-            // 普通模式下长按，打开主页面
-            launchMode == OverlayLaunchMode.NORMAL -> {
-                `fun`.kirari.hanako.overlay.openMainActivity(appContext)
-            }
-            // 自动模式下，Idle 或 ShowingLetters 状态长按，进入多页截图模式
-            launchMode == OverlayLaunchMode.AUTO && (currentState is BubbleState.Idle || currentState is BubbleState.ShowingLetters) -> {
-                enterMultiPageCaptureMode()
-            }
-            // 多页截图模式下，长按发送截图
-            currentState is BubbleState.MultiPageCapture -> {
+        val pos = _uiState.value
+        AppDebugLogStore.i(tag, "handleLongPress state=${currentState::class.simpleName} anchor=(${pos.bubbleScreenX},${pos.bubbleScreenY})")
+
+        when (currentState) {
+            is BubbleState.MultiPageCapture -> {
                 AppDebugLogStore.i(tag, "handleLongPress MultiPageCapture bitmaps=${currentState.capturedBitmaps.size}")
                 if (currentState.capturedBitmaps.isNotEmpty()) {
                     sendCaptures()
                 }
             }
-            currentState is BubbleState.MultiPageCapturing -> {
+            is BubbleState.MultiPageCapturing -> {
                 AppDebugLogStore.i(tag, "handleLongPress ignored, capturing in progress")
             }
-            currentState is BubbleState.MultiPageCaptureSuccess -> {
+            is BubbleState.MultiPageCaptureSuccess -> {
                 AppDebugLogStore.i(tag, "handleLongPress MultiPageCaptureSuccess bitmaps=${currentState.capturedBitmaps.size}")
                 if (currentState.capturedBitmaps.isNotEmpty()) {
                     sendCaptures()
                 }
+            }
+            is BubbleState.MenuExpanded -> {
+                bubbleStateMachine.dispatch(BubbleEvent.CloseMenu)
+            }
+            is BubbleState.Idle, is BubbleState.ShowingLetters,
+            is BubbleState.Copied, is BubbleState.Error -> {
+                // 长按直接进入多屏截图模式
+                enterMultiPageCaptureMode()
+            }
+            else -> {
+                // Processing 等状态长按展开菜单
+                bubbleStateMachine.dispatch(BubbleEvent.LongPress(pos.bubbleScreenX, pos.bubbleScreenY))
             }
         }
     }
@@ -439,8 +461,9 @@ internal class OverlayViewModel(
      */
     fun handleDoubleTap() {
         val currentState = bubbleStateMachine.currentState
-        AppDebugLogStore.i(tag, "handleDoubleTap state=${currentState::class.simpleName}")
-        
+        val launchMode = _uiState.value.launchMode
+        AppDebugLogStore.i(tag, "handleDoubleTap state=${currentState::class.simpleName} launchMode=$launchMode")
+
         when (currentState) {
             is BubbleState.MultiPageCapture,
             is BubbleState.MultiPageCapturing,
@@ -449,6 +472,14 @@ internal class OverlayViewModel(
             }
             is BubbleState.Processing -> {
                 cancelActiveAutoProcessing()
+            }
+            is BubbleState.Idle -> {
+                // Idle 双击展开菜单
+                val pos = _uiState.value
+                bubbleStateMachine.dispatch(BubbleEvent.LongPress(pos.bubbleScreenX, pos.bubbleScreenY))
+            }
+            is BubbleState.MenuExpanded -> {
+                bubbleStateMachine.dispatch(BubbleEvent.CloseMenu)
             }
             else -> {}
         }
@@ -493,6 +524,55 @@ internal class OverlayViewModel(
                     }
                 )
             }
+        }
+    }
+
+    fun toggleWebSearch() {
+        viewModelScope.launch {
+            repository.update { current ->
+                current.copy(webSearch = current.webSearch.copy(enabled = !current.webSearch.enabled))
+            }
+        }
+    }
+
+    /**
+     * 处理菜单项选择
+     */
+    fun handleMenuSelect(item: BubbleMenuItem) {
+        val previousState = (bubbleStateMachine.currentState as? BubbleState.MenuExpanded)?.previousState
+        AppDebugLogStore.i(tag, "handleMenuSelect item=$item previous=${previousState?.let { it::class.simpleName }}")
+
+        // 先关闭菜单，恢复到之前状态
+        bubbleStateMachine.dispatch(BubbleEvent.CloseMenu)
+
+        when (item) {
+            BubbleMenuItem.MultiPage -> {
+                if (previousState is BubbleState.Idle ||
+                    previousState is BubbleState.ShowingLetters ||
+                    previousState is BubbleState.Copied ||
+                    previousState is BubbleState.Error
+                ) {
+                    enterMultiPageCaptureMode()
+                } else {
+                    Toast.makeText(appContext, "当前状态无法进入多图模式", Toast.LENGTH_SHORT).show()
+                }
+            }
+            BubbleMenuItem.ToggleRoute -> toggleProcessingRoute()
+            BubbleMenuItem.ToggleSearch -> toggleWebSearch()
+            BubbleMenuItem.VoiceRecognition -> {
+                Toast.makeText(appContext, "语音识别暂未实现", Toast.LENGTH_SHORT).show()
+            }
+            BubbleMenuItem.Settings -> openMainActivity(appContext)
+        }
+    }
+
+    /**
+     * 更新气泡屏幕位置，用于菜单定位
+     */
+    fun updateBubblePosition(x: Int, y: Int) {
+        val current = _uiState.value
+        if (current.bubbleScreenX != x || current.bubbleScreenY != y) {
+            _uiState.update { it.copy(bubbleScreenX = x, bubbleScreenY = y) }
         }
     }
 
@@ -632,7 +712,7 @@ internal class OverlayViewModel(
             )
         }
         if (isAutoMode) {
-            bubbleStateMachine.forceState(BubbleState.Idle)
+            bubbleStateMachine.dispatch(BubbleEvent.ErrorOccurred(message))
         }
     }
 

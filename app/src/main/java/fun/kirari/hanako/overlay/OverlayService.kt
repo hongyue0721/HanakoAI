@@ -26,6 +26,8 @@ import android.widget.TextView
 import android.widget.Toast
 import `fun`.kirari.hanako.automation.BubbleRenderer
 import `fun`.kirari.hanako.automation.BubbleState
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -42,6 +44,7 @@ import `fun`.kirari.hanako.R
 import `fun`.kirari.hanako.capture.MediaProjectionForegroundService
 import `fun`.kirari.hanako.capture.ProjectionPermissionActivity
 import `fun`.kirari.hanako.debug.AppDebugLogStore
+import `fun`.kirari.hanako.ui.theme.HanakoTheme
 import `fun`.kirari.hanako.easeOutCubic
 import `fun`.kirari.hanako.copyToClipboard
 import `fun`.kirari.hanako.copyToClipboardWithToast
@@ -78,14 +81,18 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     private var bubbleIconView: ImageView? = null
     private var bubbleTextView: TextView? = null
     private var bubbleSpinnerView: ProgressBar? = null
+    private var bubbleCountView: TextView? = null
     private var bubbleColorAnimator: ValueAnimator? = null
     private var bubbleCompletionResetJob: Job? = null
+    private var errorResetJob: Job? = null
     private var lastHandledCompletionId: String? = null
     private var panelView: FrameLayout? = null
     private var panelContentView: androidx.compose.ui.platform.ComposeView? = null
     private var panelHandleView: FrameLayout? = null
     private lateinit var overlayViewModel: OverlayViewModel
     private var bubbleParams: WindowManager.LayoutParams? = null
+    private var menuParams: WindowManager.LayoutParams? = null
+    private var menuView: androidx.compose.ui.platform.ComposeView? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var panelHandleParams: WindowManager.LayoutParams? = null
     private var panelScreenHeightPx: Int = 0
@@ -142,16 +149,20 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 
     override fun onDestroy() {
         dismissPanel()
+        hideMenuOverlay()
         bubbleColorAnimator?.cancel()
         bubbleColorAnimator = null
         bubbleCompletionResetJob?.cancel()
         bubbleCompletionResetJob = null
+        errorResetJob?.cancel()
+        errorResetJob = null
         bubbleView?.let { runCatching { windowManager.removeView(it) } }
         bubbleView = null
         bubbleSurfaceView = null
         bubbleIconView = null
         bubbleTextView = null
         bubbleSpinnerView = null
+        bubbleCountView = null
         OverlayRuntimeState.setRunning(false)
         serviceViewModelStore.clear()
         serviceScope.cancel()
@@ -169,6 +180,24 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                     "uiState launchMode=${state.launchMode} autoRunState=${state.autoRunState} bubble=${state.bubbleState::class.simpleName} sheetVisible=${state.sheetVisible} working=${state.working} resultId=${state.result?.id} error=${state.error}"
                 )
                 updateBubbleAppearance(state.bubbleState, state.launchMode)
+                if (state.bubbleState is BubbleState.MenuExpanded) {
+                    showMenuOverlay()
+                } else {
+                    hideMenuOverlay()
+                }
+                // Error 状态自动恢复：5 秒后回到 Idle，避免用户错过红色提示后卡住
+                if (state.bubbleState is BubbleState.Error) {
+                    if (errorResetJob == null) {
+                        AppDebugLogStore.i(logTag, "error state detected, scheduling auto-reset in ${ERROR_VISIBLE_MS}ms")
+                        errorResetJob = serviceScope.launch {
+                            delay(ERROR_VISIBLE_MS)
+                            overlayViewModel.resetBubbleState()
+                        }
+                    }
+                } else {
+                    errorResetJob?.cancel()
+                    errorResetJob = null
+                }
                 if (state.sheetVisible) {
                     showOrUpdatePanel(state.sheetMode)
                 } else {
@@ -245,10 +274,42 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
             addView(iconView)
             addView(textView)
         }
+        val density = resources.displayMetrics.density
+        val shadowSizePx = (surfaceSizePx + (6f * density).roundToInt())
+        val shadowView = View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(shadowSizePx, shadowSizePx, Gravity.CENTER)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#20000000"))
+            }
+            translationX = 1f * density
+            translationY = 3f * density
+            alpha = 0.7f
+        }
+        val countSizePx = (18f * density).roundToInt()
+        val countView = TextView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(countSizePx, countSizePx).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = (2f * density).roundToInt()
+                marginEnd = (2f * density).roundToInt()
+            }
+            gravity = Gravity.CENTER
+            textSize = 10f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#BA1A1A"))
+                setStroke((1.5f * density).roundToInt(), Color.WHITE)
+            }
+            visibility = View.GONE
+        }
         val view = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(rootSizePx, rootSizePx)
+            addView(shadowView)
             addView(spinnerView)
             addView(surfaceView)
+            addView(countView)
             var downRawX = 0f
             var downRawY = 0f
             var startX = 0
@@ -275,11 +336,19 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
             val doubleTapTimeoutRunnable = Runnable {
                 if (!doubleTapDetected && !longPressTriggered) {
                     // 单击超时，执行单击操作
+                    performHapticFeedback(
+                        HapticFeedbackConstants.VIRTUAL_KEY,
+                        HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+                    )
                     overlayViewModel.handleSingleTap()
                 }
                 doubleTapDetected = false
             }
-            
+
+            fun updateBubbleCenterPosition() {
+                overlayViewModel.updateBubblePosition(params.x + rootSizePx / 2, params.y + rootSizePx / 2)
+            }
+
             setOnTouchListener { _: View, event: MotionEvent ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
@@ -293,6 +362,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         removeCallbacks(longPressRunnable)
                         removeCallbacks(doubleTapTimeoutRunnable)
                         postDelayed(longPressRunnable, longPressTimeout)
+                        updateBubbleCenterPosition()
                         true
                     }
 
@@ -308,6 +378,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                             params.x = startX + dx
                             params.y = startY + dy
                             windowManager.updateViewLayout(this, params)
+                            updateBubbleCenterPosition()
                         }
                         true
                     }
@@ -346,8 +417,10 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         bubbleIconView = iconView
         bubbleTextView = textView
         bubbleSpinnerView = spinnerView
+        bubbleCountView = countView
         windowManager.addView(view, params)
         bubbleView = view
+        overlayViewModel.updateBubblePosition(params.x + rootSizePx / 2, params.y + rootSizePx / 2)
         updateBubbleAppearance(BubbleState.Idle, OverlayLaunchMode.NORMAL)
     }
 
@@ -617,6 +690,12 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         if (appearance.letters != null) {
             textView?.text = appearance.letters
             textView?.setTextColor(appearance.iconTint)
+            textView?.textSize = when (appearance.letters.length) {
+                in 1..2 -> 16f
+                in 3..4 -> 13f
+                in 5..6 -> 10f
+                else -> 8f
+            }
             textView?.visibility = View.VISIBLE
             icon.visibility = View.GONE
         } else {
@@ -669,6 +748,15 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                     .start()
             }
         }
+
+        bubbleCountView?.apply {
+            if (appearance.showCaptureCount) {
+                text = appearance.captureCount.toString()
+                visibility = View.VISIBLE
+            } else {
+                visibility = View.GONE
+            }
+        }
     }
 
     private fun dismissPanel() {
@@ -694,6 +782,56 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         panelClosing = false
     }
 
+    private fun showMenuOverlay() {
+        if (menuView != null) return
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.START or Gravity.TOP
+            x = 0
+            y = 0
+        }
+        menuParams = params
+        val composeView = androidx.compose.ui.platform.ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@OverlayService)
+            setViewTreeViewModelStoreOwner(this@OverlayService)
+            setViewTreeSavedStateRegistryOwner(this@OverlayService)
+            setContent {
+                HanakoTheme {
+                    val uiState by overlayViewModel.uiState.collectAsState()
+                    val bubbleState = uiState.bubbleState
+                    if (bubbleState is BubbleState.MenuExpanded) {
+                        BubbleMenu(
+                            anchorX = bubbleState.anchorX,
+                            anchorY = bubbleState.anchorY,
+                            settings = uiState.settings,
+                            onItemClick = { item ->
+                                overlayViewModel.handleMenuSelect(item)
+                            },
+                            onDismiss = {
+                                overlayViewModel.handleSingleTap()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        menuView = composeView
+        windowManager.addView(composeView, params)
+    }
+
+    private fun hideMenuOverlay() {
+        menuView?.let { view ->
+            runCatching { windowManager.removeView(view) }
+        }
+        menuView = null
+        menuParams = null
+    }
+
     companion object {
         const val ACTION_STOP = "fun.kirari.hanako.overlay.STOP"
         internal const val CHANNEL_ID = "overlay_service"
@@ -701,5 +839,6 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         private const val NOTIFICATION_ID = 1001
         internal const val AUTOMATION_COMPLETE_NOTIFICATION_ID = 1002
         private const val AUTO_COMPLETED_VISIBLE_MS = 2800L
+        private const val ERROR_VISIBLE_MS = 5000L
     }
 }
