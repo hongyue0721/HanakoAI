@@ -171,7 +171,7 @@ internal class OverlayViewModel(
                     when (models.route) {
                         ProcessingRoute.OCR_THEN_LLM -> {
                             pipeline.validateOcrThenLlmModels(models)
-                            val (ocrText, answer) = pipeline.streamOcrThenChat(
+                            val (ocrText, answer, searchOutcome) = pipeline.streamOcrThenChat(
                                 models = models,
                                 bitmaps = bitmaps,
                                 onOcrDelta = { delta ->
@@ -181,7 +181,7 @@ internal class OverlayViewModel(
                                     _uiState.update { current -> current.copy(liveAnswerText = current.liveAnswerText + delta) }
                                 }
                             )
-                            pipeline.buildChatResult(baseResult, models, ocrText, answer, historyId, screenshotPaths)
+                            pipeline.buildChatResult(baseResult, models, ocrText, answer, historyId, screenshotPaths, searchOutcome)
                         }
 
                         ProcessingRoute.MULTIMODAL_DIRECT -> {
@@ -193,7 +193,7 @@ internal class OverlayViewModel(
                                     _uiState.update { current -> current.copy(liveAnswerText = current.liveAnswerText + delta) }
                                 }
                             )
-                            pipeline.buildChatResult(baseResult, models, "", answer, historyId, screenshotPaths)
+                            pipeline.buildChatResult(baseResult, models, "", answer, historyId, screenshotPaths, null)
                         }
                     }
                 }
@@ -418,14 +418,26 @@ internal class OverlayViewModel(
         AppDebugLogStore.i(tag, "handleMenuSelect item=$item")
         when (item) {
             BubbleMenuItem.ToggleRoute -> toggleProcessingRoute()
-            BubbleMenuItem.ToggleSearch -> {
-                // 联网搜索开关，需要联网搜索 PR 合入后生效
-            }
+            BubbleMenuItem.ToggleSearch -> toggleWebSearch()
             BubbleMenuItem.Settings -> {
                 `fun`.kirari.hanako.overlay.openMainActivity(appContext)
             }
             BubbleMenuItem.VoiceRecognition -> {
                 // 语音功能暂未实现
+            }
+        }
+        // 不在此处 dispatch CloseMenu。
+        // 状态恢复统一由退场动画结束后的 onMenuDismissed() 处理，
+        // 否则 Compose 会立刻移除 BubbleMenu 导致退场动画被取消、
+        // overlay 窗口残留拦截触摸事件。
+    }
+
+    fun toggleWebSearch() {
+        viewModelScope.launch {
+            repository.update { current ->
+                current.copy(
+                    webSearch = current.webSearch.copy(enabled = !current.webSearch.enabled)
+                )
             }
         }
     }
@@ -517,7 +529,12 @@ internal class OverlayViewModel(
                     return OverlayViewModel(
                         appContext = appContext,
                         repository = container.settingsRepository,
-                        pipeline = ProcessingPipeline(appContext, container.unifiedLLMClient, container.localOcrManager),
+                        pipeline = ProcessingPipeline(
+                            appContext = appContext,
+                            unifiedClient = container.unifiedLLMClient,
+                            localOcrManager = container.localOcrManager,
+                            searchOrchestrator = container.searchOrchestrator
+                        ),
                         providerModelsApi = container.providerModelsApi
                     ) as T
                 }

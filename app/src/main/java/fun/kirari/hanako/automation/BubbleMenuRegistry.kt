@@ -34,13 +34,12 @@ object BubbleMenuRegistry {
             iconRes = R.drawable.ic_bubble_route,
             isChecked = { it.processingRoute == ProcessingRoute.MULTIMODAL_DIRECT }
         ),
-        // 联网搜索开关，需要联网搜索 PR 合入后启用
-        // BubbleMenuEntry(
-        //     item = BubbleMenuItem.ToggleSearch,
-        //     label = "联网",
-        //     iconRes = R.drawable.ic_bubble_search,
-        //     isChecked = { it.webSearch.enabled }
-        // ),
+        BubbleMenuEntry(
+            item = BubbleMenuItem.ToggleSearch,
+            label = "联网",
+            iconRes = R.drawable.ic_bubble_search,
+            isChecked = { it.webSearch.enabled }
+        ),
         // 语音识别功能暂未实现，暂时屏蔽，后续直接取消注释即可恢复
         // BubbleMenuEntry(
         //     item = BubbleMenuItem.VoiceRecognition,
