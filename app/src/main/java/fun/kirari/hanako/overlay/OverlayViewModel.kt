@@ -508,8 +508,15 @@ internal class OverlayViewModel(
                 error = message
             )
         }
+        // 进入 Error 状态显示错误图标，延迟后自动恢复 Idle
+        bubbleStateMachine.dispatch(BubbleEvent.ErrorOccurred(message))
         if (isAutoMode) {
-            bubbleStateMachine.forceState(BubbleState.Idle)
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(3000)
+                if (bubbleStateMachine.currentState is BubbleState.Error) {
+                    bubbleStateMachine.forceState(BubbleState.Idle)
+                }
+            }
         }
     }
 
